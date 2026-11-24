@@ -316,7 +316,10 @@ macOS and Windows: download the archive from the release page and run `rustadsb`
 
 ## Releases
 
-Every tag `vX.Y.Z` builds and publishes a release on Gitea (`.gitea/workflows/build.yml`): tests first,
+On GitHub, `.github/workflows/build.yml` tests on Linux and macOS, builds all eight archives below (macOS on a
+macOS runner) and, for a tag `vX.Y.Z`, publishes them as a release with `SHA256SUMS`.
+
+On Gitea, every tag `vX.Y.Z` builds and publishes a release (`.gitea/workflows/build.yml`): tests first,
 then one archive per target, plus `SHA256SUMS`.
 
 | Platform | Archive target |

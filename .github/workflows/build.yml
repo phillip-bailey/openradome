@@ -1,0 +1,158 @@
+# GitHub Actions: test on Linux and macOS, build every release target, and publish a release for a v* tag.
+#
+#   push / pull request   tests + all builds (archives kept as workflow artifacts for 14 days)
+#   tag vX.Y.Z            the same, then a GitHub release with every archive and SHA256SUMS
+#                         (a tag with a '-' in it, like v1.0.0-rc1, is marked as a pre-release)
+#
+# Linux and Windows are cross-compiled on Linux with cargo-zigbuild; Linux binaries are linked against glibc 2.31
+# (Debian 11 / Raspberry Pi OS Bullseye and later). macOS is built natively on a macOS runner.
+# (Gitea reads .gitea/workflows instead; this file is for GitHub only.)
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.99.1"
+  ZIG_VERSION: "0.17.1"
+  ZIG_SHA256: "3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a"
+  ZIGBUILD_VERSION: "0.24.1"
+  GLIBC: "2.31"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt -c clippy
+          rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@v2
+      - name: Format, clippy, unit, network and golden tests
+        run: make test
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,      os: ubuntu-latest, zig: true }
+          - { target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, zig: true }
+          - { target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, zig: true }
+          - { target: arm-unknown-linux-gnueabihf,   os: ubuntu-latest, zig: true }
+          - { target: x86_64-pc-windows-gnu,         os: ubuntu-latest, zig: true }
+          - { target: aarch64-pc-windows-gnullvm,    os: ubuntu-latest, zig: true }
+          - { target: aarch64-apple-darwin,          os: macos-latest,  zig: false }
+          - { target: x86_64-apple-darwin,           os: macos-latest,  zig: false }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust ${{ env.RUST_VERSION }} for ${{ matrix.target }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target "${{ matrix.target }}"
+          rustup default "$RUST_VERSION"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: zig ${{ env.ZIG_VERSION }} (checksum pinned) and cargo-zigbuild
+        if: matrix.zig
+        run: |
+          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${ZIG_SHA256}  zig.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/zig" && tar -xJf zig.tar.xz -C "$HOME/zig" --strip-components=1 && rm zig.tar.xz
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+          cargo install --locked "cargo-zigbuild@${ZIGBUILD_VERSION}"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -eu
+          case "${{ matrix.target }}" in
+            *linux*) cargo zigbuild --release --locked --target "${{ matrix.target }}.${GLIBC}" ;;
+            *windows*) cargo zigbuild --release --locked --target "${{ matrix.target }}" ;;
+            *) cargo build --release --locked --target "${{ matrix.target }}" ;;
+          esac
+
+      - name: Smoke test (the build runs on this runner)
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/rustadsb"
+          "$bin" --help >/dev/null
+          # decodes the synthetic flight capture exactly as upstream does
+          "$bin" --ifile testdata/flights_uc8.bin --iformat UC8 --fix --lat 52.0 --lon 4.0 --max-range 450 --raw \
+            | diff -q - testdata/flights_uc8.upstream.raw
+
+      - name: Package
+        shell: bash
+        run: |
+          set -eu
+          case "$GITHUB_REF" in refs/tags/*) version="$GITHUB_REF_NAME" ;; *) version="dev-${GITHUB_SHA::7}" ;; esac
+          name="rustadsb-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          case "${{ matrix.target }}" in *windows*) bin=rustadsb.exe ;; *) bin=rustadsb ;; esac
+          cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE "dist/$name/"
+          cd dist
+          case "${{ matrix.target }}" in
+            *windows*) 7z a -bd -tzip "$name.zip" "$name" >/dev/null ;;
+            *) tar -czf "$name.tar.gz" "$name" ;;
+          esac
+          rm -rf "$name"
+          ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustadsb-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          notes="Linux (x86_64, aarch64, armv7, armv6), Windows (x86_64, ARM64) and macOS (Apple silicon, Intel) builds. Check downloads against SHA256SUMS. Install on Linux with install.sh (see the README)."
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes" $pre
+          fi

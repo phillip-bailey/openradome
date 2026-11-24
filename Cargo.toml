@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/rustadsb-core", "crates/rustadsb"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

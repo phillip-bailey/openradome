@@ -1,0 +1,36 @@
+Local receiver:
+  208453 samples processed
+  0 samples dropped
+  53691 samples lost
+  0 Mode A/C messages received
+  592 Mode-S message preambles received
+    285 with bad message format or invalid CRC
+    233 with unrecognized ICAO address
+    64 accepted with correct CRC
+    10 accepted with 1-bit error repaired
+  -23.1 dBFS noise power
+  -9.8 dBFS mean signal power
+  -5.8 dBFS peak signal power
+  0 messages with signal power above -3dBFS
+         3        4        5        6        7
+       333      333      419      419      377
+         4        5        6        7        8
+        17       12       10       16       19
+74 total usable messages
+8 surface position messages received
+16 airborne position messages received
+1 global CPR attempts with valid positions
+0 global CPR attempts with bad data
+  0 global CPR attempts that failed the range check
+  0 global CPR attempts that failed the speed check
+2 global CPR attempts with insufficient data
+0 local CPR attempts with valid positions
+  0 aircraft-relative positions
+  0 receiver-relative positions
+23 local CPR attempts that did not produce useful positions
+  0 local CPR attempts that failed the range check
+  0 local CPR attempts that failed the speed check
+0 CPR messages that look like transponder failures filtered
+0 non-ES altitude messages from ES-equipped aircraft ignored
+27 unique aircraft tracks
+0 aircraft tracks where only one message was seen

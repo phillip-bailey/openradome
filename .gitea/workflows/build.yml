@@ -1,0 +1,104 @@
+# Test on every push; build every Linux and Windows binary; on a tag (v*) publish them as a release.
+#
+# Runs on the Gitea runner (ubuntu-latest, x86_64). Every target is cross-compiled with cargo-zigbuild, so no
+# ARM machine is needed. Linux binaries are linked against glibc 2.31 (runs on Raspberry Pi OS Bullseye and later,
+# Debian 11+, Ubuntu 20.04+).
+#
+# macOS cannot be built here (it needs Apple's SDK). Build it on a Mac with `make release-mac TAG=vX.Y.Z`, which
+# adds the two macOS archives to the same release and regenerates SHA256SUMS.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch: {}
+
+env:
+  RUST_VERSION: "1.99.1"
+  ZIG_VERSION: "0.17.1"
+  ZIG_SHA256: "3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a"
+  ZIGBUILD_VERSION: "0.24.1"
+  GLIBC: "2.31"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" -c rustfmt -c clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Install zig ${{ env.ZIG_VERSION }} (checksum pinned)
+        run: |
+          curl -fsSL -o zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${ZIG_SHA256}  zig.tar.xz" | sha256sum -c -
+          mkdir -p "$HOME/zig" && tar -xJf zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: Install cargo-zigbuild ${{ env.ZIGBUILD_VERSION }}
+        run: cargo install --locked "cargo-zigbuild@${ZIGBUILD_VERSION}"
+
+      - name: Test (format, clippy, unit, network and golden tests)
+        run: make test
+
+      - name: Build every target
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME}"
+          case "$GITHUB_REF" in refs/tags/*) ;; *) VERSION="dev-$(git rev-parse --short HEAD)" ;; esac
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p dist
+          # triple|zig suffix
+          while IFS='|' read -r triple suffix; do
+            [ -n "$triple" ] || continue
+            rustup target add "$triple"
+            cargo zigbuild --release --locked --target "${triple}${suffix}"
+            name="rustadsb-${VERSION}-${triple}"
+            stage="dist/${name}"
+            mkdir -p "$stage"
+            case "$triple" in
+              *windows*) bin=rustadsb.exe ;;
+              *)         bin=rustadsb ;;
+            esac
+            cp "target/${triple}/release/${bin}" "$stage/"
+            cp README.md COPYING NOTICE "$stage/"
+            case "$triple" in
+              *windows*) (cd dist && zip -qr "${name}.zip" "${name}") ;;
+              *)         tar -C dist -czf "dist/${name}.tar.gz" "${name}" ;;
+            esac
+            rm -rf "$stage"
+          done <<EOF
+          x86_64-unknown-linux-gnu|.${GLIBC}
+          aarch64-unknown-linux-gnu|.${GLIBC}
+          armv7-unknown-linux-gnueabihf|.${GLIBC}
+          arm-unknown-linux-gnueabihf|.${GLIBC}
+          x86_64-pc-windows-gnu|
+          aarch64-pc-windows-gnullvm|
+          EOF
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -l dist; cat dist/SHA256SUMS
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          api="${GITHUB_API_URL:-${GITHUB_SERVER_URL}/api/v1}/repos/${GITHUB_REPOSITORY}"
+          auth="Authorization: token ${TOKEN}"
+          # Re-running a tag replaces its release.
+          old=$(curl -fsS -H "$auth" "$api/releases/tags/${GITHUB_REF_NAME}" 2>/dev/null | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2 || true)
+          [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$old"
+          pre=false; case "$GITHUB_REF_NAME" in *-*) pre=true ;; esac
+          id=$(curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' "$api/releases" \
+                 -d "{\"tag_name\":\"${GITHUB_REF_NAME}\",\"name\":\"${GITHUB_REF_NAME}\",\"prerelease\":${pre},\"body\":\"Linux (x86_64, aarch64, armv7, armv6) and Windows (x86_64, arm64) built by CI. macOS is added by make release-mac. Verify downloads against SHA256SUMS.\"}" \
+               | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+          [ -n "$id" ] || { echo "could not create release" >&2; exit 1; }
+          for f in dist/*; do
+            curl -fsS -X POST -H "$auth" -F "attachment=@${f}" "$api/releases/$id/assets?name=$(basename "$f")" >/dev/null
+            echo "uploaded $(basename "$f")"
+          done

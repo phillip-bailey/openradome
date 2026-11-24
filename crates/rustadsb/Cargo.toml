@@ -1,0 +1,19 @@
+[package]
+name = "rustadsb"
+description = "ADS-B and Mode S decoder command line tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive", "env"] }
+rustadsb-core = { path = "../rustadsb-core" }
+rtlsdr-nusb = "0.3.1"
+socket2 = "0.6.5"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "signal", "macros"] }
+flate2 = "1.1.11"
+ruzstd = "0.9.1"
+
+[lints]
+workspace = true

@@ -304,6 +304,28 @@ mcp-token-file = \"$MCP_TOKEN\"   # clients send: Authorization: Bearer <the tok
   DASH_LINE="# dashboard-port = 8090              # the status web page: http://<this host>:8090/"
   [ -z "$DASHBOARD_PORT" ] || DASH_LINE="dashboard-port = $DASHBOARD_PORT                # the status web page: http://<this host>:$DASHBOARD_PORT/"
   mkdir -p "$(dirname "$CONF")"
+  EXAMPLE=$(find "$TMP" -type f -name rustadsb.example.toml | head -1)
+  if [ -n "$EXAMPLE" ]; then
+    # the release's own commented example, with this install's choices filled in
+    sed -e "1,3s|example configuration|configuration|" \
+        -e "s|^gain = [0-9.]*|gain = $GAIN|" \
+        -e "s|^net-bind-address = \"[^\"]*\"|net-bind-address = \"$BIND\"|" \
+        -e "s|^write-json = \"[^\"]*\"|write-json = \"$JSON_DIR\"|" \
+        "$EXAMPLE" >"$CONF.new"
+    if [ -n "$LAT" ] && [ -n "$LON" ]; then
+      sed -i -e "s|^# lat = [-0-9.]*|lat = $LAT|" -e "s|^# lon = [-0-9.]*|lon = $LON|" "$CONF.new"
+    fi
+    [ -z "$DASHBOARD_PORT" ] || sed -i "s|^# dashboard-port = [0-9]*|dashboard-port = $DASHBOARD_PORT|" "$CONF.new"
+    [ -z "$MCP_PORT" ] || sed -i -e "s|^# mcp-port = [0-9]*|mcp-port = $MCP_PORT|" -e "s|^# mcp-token-file = |mcp-token-file = |" "$CONF.new"
+    if [ "$BIND" = 127.0.0.1 ]; then
+      # data ports kept local: the page and MCP still answer on the network
+      [ -z "$DASHBOARD_PORT" ] || sed -i "s|^# dashboard-bind-address = |dashboard-bind-address = |" "$CONF.new"
+      [ -z "$MCP_PORT" ] || sed -i "s|^# mcp-bind-address = |mcp-bind-address = |" "$CONF.new"
+    fi
+    "$NEW" --config "$CONF.new" --print-config >/dev/null || die "the example config does not read (nothing was changed)"
+    mv "$CONF.new" "$CONF"
+    say "wrote $CONF"
+  else
   cat >"$CONF" <<EOF
 # rustadsb options, read by rustadsb.service (rustadsb --config $CONF).
 # One key per long option, as rustadsb --help lists them; true turns an on/off option on.
@@ -348,6 +370,7 @@ quiet = true
 # net-api-port = 8080                 # the HTTP API (/re-api)
 EOF
   say "wrote $CONF"
+  fi
 fi
 if [ -n "$MCP_PORT" ]; then
   # a random token only root and the rustadsb service can read; kept if there already is one

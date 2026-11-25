@@ -110,7 +110,7 @@ jobs:
           name="rustadsb-${version}-${{ matrix.name }}"
           mkdir -p "dist/$name"
           case "${{ matrix.target }}" in *windows*) bin=rustadsb.exe ;; *) bin=rustadsb ;; esac
-          cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE "dist/$name/"
+          cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE rustadsb.example.toml "dist/$name/"
           cd dist
           case "${{ matrix.target }}" in
             *windows*) 7z a -bd -tzip "$name.zip" "$name" >/dev/null ;;

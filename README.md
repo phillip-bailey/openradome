@@ -564,7 +564,9 @@ the dongle and keeps the DVB-T TV driver off it, then writes the options file `/
 
 ### Configuration file
 
-`rustadsb --config <file.toml>` reads options from a TOML file. Each key is a long option's name as
+`rustadsb --config <file.toml>` reads options from a TOML file. [`rustadsb.example.toml`](rustadsb.example.toml) is a
+complete, commented example (it is also in every release archive, and `install.sh` writes it, with your choices
+filled in, as `/etc/rustadsb/rustadsb.toml` on a new install). Each key is a long option's name as
 `rustadsb --help` lists it, without the dashes; `true` turns an on/off option on; an option that can be given
 more than once takes a list. Options on the command line override the file. A mistyped key is an error, not
 ignored.

@@ -1,0 +1,101 @@
+# ============================================================================================
+# rustadsb — example configuration (rustadsb --config /etc/rustadsb/rustadsb.toml)
+# ============================================================================================
+# install.sh writes this file as /etc/rustadsb/rustadsb.toml on a new install, with your gain,
+# position and choices filled in, and never overwrites it afterwards. Every key is one of
+# rustadsb's long options without the "--": rustadsb --help lists them all, and any of them can
+# go here. Options given on the command line override this file.
+#
+# After editing:
+#   1. check the file:  rustadsb --config /etc/rustadsb/rustadsb.toml --print-config
+#                       (prints the settings it understood; a mistake is named, e.g. unknown option "gian")
+#   2. apply it:        sudo systemctl restart rustadsb
+#   3. check it runs:   systemctl is-active rustadsb        (logs: journalctl -u rustadsb -n 30)
+# A file rustadsb cannot read stops the decoder, and with it every feed client or MLAT client that
+# reads from it: always do step 1 first. A restart takes a few seconds; clients reconnect by themselves.
+#
+# TOML rules: text in "quotes"; numbers bare (gain = 49.6); on/off options are true or false, lower
+# case, no quotes. "false" only leaves an option out: to switch off something that is on by default,
+# use its "no-" option (no-fix = true). An option that can be given several times takes a list
+# (net-connector = ["...", "..."]). Lines starting with # are ignored: put a # in front of a line to
+# switch it off, take it away to switch it back on. Sections like [net] are not used.
+
+# --------------------------------------------------------------------------------------------
+# Receiver: the RTL-SDR USB dongle
+# --------------------------------------------------------------------------------------------
+device-type = "rtlsdr"
+device = 0              # the first dongle (or its serial number, in quotes)
+gain = 49.6             # dB; 49.6 is the maximum. Lower it if "strong signals" (dashboard, stats.json)
+                        # stay above a few % of messages: signals near -3 dBFS are clipping.
+ppm = 0                 # the dongle's frequency error; 0 is fine for ADS-B
+
+# --------------------------------------------------------------------------------------------
+# Decoder
+# --------------------------------------------------------------------------------------------
+# lat = 51.5            # the antenna's position, in degrees: needed for positions from single
+# lon = -0.1            # messages, distances and the range outline. Set both, then restart.
+max-range = 450         # nautical miles; positions further away are treated as errors
+fix = true              # repair messages with a single-bit error (no-fix = true turns it off)
+write-json-every = 1    # seconds between aircraft.json updates
+
+# --------------------------------------------------------------------------------------------
+# Network ports
+# --------------------------------------------------------------------------------------------
+net = true
+net-bind-address = "0.0.0.0"    # "0.0.0.0": every network the computer is on. "127.0.0.1": this
+                                # computer only, when every feeder and map runs on it too.
+net-ri-port = 30001             # raw in
+net-ro-port = 30002             # raw out
+net-sbs-port = 30003            # SBS (BaseStation) out: Virtual Radar Server, Planefence, ...
+net-bi-port = "30004,30104"     # Beast in; 30104 is where MLAT clients send their results back
+net-bo-port = 30005             # Beast out: what feeders, MLAT clients and maps (tar1090) read
+
+# --------------------------------------------------------------------------------------------
+# Output files
+# --------------------------------------------------------------------------------------------
+json-location-accuracy = 2      # 2: the receiver position is in the JSON files; 0 leaves it out
+range-outline-hours = 24        # the range outline covers the last 24 hours
+write-json = "/run/rustadsb"    # aircraft.json, stats.json, receiver.json, outline.json. Keep it
+                                # directly under /run: the service unit has systemd create it.
+write-state = "/var/lib/rustadsb"   # the range outline is saved here and survives restarts
+quiet = true                    # no message printout (it would fill the journal)
+
+# --------------------------------------------------------------------------------------------
+# Dashboard: a status web page, http://<this computer>:8090/
+# --------------------------------------------------------------------------------------------
+# Live figures, the computer's health, 24-hour graphs and the open connections; read-only, no login.
+# On while dashboard-port is set: take the # away (and restart) to switch it on.
+# dashboard-port = 8090
+# dashboard-bind-address = "0.0.0.0"   # the page on the network while net-bind-address keeps the
+#                                      # data ports on 127.0.0.1; does nothing without dashboard-port
+
+# --------------------------------------------------------------------------------------------
+# MCP server for AI assistants: http(s)://<this computer>:8091/mcp
+# --------------------------------------------------------------------------------------------
+# Read-only tools an assistant such as Claude Code can ask: station status, history, the computer's
+# health, connections, aircraft, range. See "MCP server" in the README for adding it to Claude Code.
+#
+# On/off:  on while mcp-port is set. install.sh --mcp-port 8091 makes the token file and sets these.
+#
+# Token:   every client must send "Authorization: Bearer <token>", the token in mcp-token-file
+#          (make it readable by root and the service only). New token: write a new one into the file
+#          (e.g. openssl rand -hex 32), restart, update the clients. At least 32 characters.
+#
+# TLS:     on while BOTH mcp-tls-cert and mcp-tls-key are set; then it speaks HTTPS only. Without
+#          them it speaks plain HTTP, and the token crosses the network unencrypted.
+#          !! Only one of the two set = rustadsb refuses to start (and the decoder is down).
+#          Switching TLS on or off changes the address clients use (https:// or http://).
+#          A renewed certificate is picked up within 10 s, without a restart.
+# mcp-port = 8091
+# mcp-token-file = "/etc/rustadsb/mcp-token"
+# mcp-bind-address = "0.0.0.0"         # on the network while the data ports stay on 127.0.0.1
+# mcp-tls-cert = "/etc/rustadsb/tls/fullchain.pem"   # PEM, certificate first, then the chain
+# mcp-tls-key = "/etc/rustadsb/tls/privkey.pem"      # PEM; readable by the service user
+
+# --------------------------------------------------------------------------------------------
+# Optional extras
+# --------------------------------------------------------------------------------------------
+# net-api-port = 8080                  # readsb's HTTP query API (/re-api), e.g. for tar1090
+# write-json-globe-index = true        # globe tiles and traces, for tar1090's globe view
+# Feed a network straight from the decoder (most feeders run their own client instead):
+# net-connector = ["feed.example.org,30004,beast_reduce_plus_out"]

@@ -1,6 +1,6 @@
 # rustadsb
 
-## Executive summary
+## What is ADS-B?
 
 **ADS-B** (Automatic Dependent Surveillance–Broadcast) is how aircraft tell the world where they are. An equipped
 aircraft works out its own position by satellite navigation (GPS) and broadcasts it by radio on 1090 MHz, about
@@ -8,7 +8,7 @@ twice a second, together with its identity, callsign, altitude, speed and headin
 report is *automatic*, it *depends* on the aircraft's own navigation rather than on a radar measuring it, and it is
 *broadcast* to anyone listening.
 
-**Why it is used**
+### Why it is used
 
 - **Air traffic control sees more, more precisely.** A radar sweeps every 4 to 12 seconds and grows less accurate
   with distance; ADS-B gives a GPS-accurate position twice a second. A receiving station costs a small fraction of a
@@ -24,8 +24,10 @@ report is *automatic*, it *depends* on the aircraft's own navigation rather than
   others), whose maps are used by the public, journalists, researchers studying emissions and noise, airports and
   accident investigators.
 
-**What rustadsb is.** The software at the heart of such a receiving station. It turns the raw radio signal from the
-USB radio into a live list of aircraft with their positions, feeds the station's own map, and forwards the data to
+## What rustadsb does
+
+rustadsb is the software at the heart of such a receiving station. It turns the raw radio signal from the USB radio
+into a live list of aircraft with their positions, feeds the station's own map, and forwards the data to
 flight-tracking networks such as Flightradar24, FlightAware, ADS-B Exchange and adsb.lol. It is a memory-safe
 rewrite, in Rust, of readsb, the decoder most stations run today. It takes the same options and produces the same
 outputs, so it can replace readsb without changing the rest of a station. It runs in service on a Raspberry Pi, and

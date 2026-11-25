@@ -281,50 +281,167 @@ Pi's LAN address). There is no password, so do not expose the port to the intern
 
 ## MCP server
 
-An optional [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI assistant (Claude Code,
-Claude Desktop, any MCP client) can ask the station how it is doing: "how is reception tonight?", "when did
-the message rate drop?", "what is the low aircraft over the house?". Off unless you give a port; read-only.
+An optional [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI assistant (Claude Code
+or any other MCP client) can ask the station how it is doing, in plain language: "how is reception tonight?",
+"when did the message rate drop?", "what is the low aircraft over the house?". It is off unless you give it a
+port, and read-only: no tool can change anything.
+
+### Turning it on
 
 ```toml
 # /etc/rustadsb/rustadsb.toml
 mcp-port = 8091
-mcp-token-file = "/etc/rustadsb/mcp-token"     # one token of at least 32 characters
-# mcp-bind-address = "0.0.0.0"                 # when net-bind-address keeps the data ports on 127.0.0.1
+mcp-token-file = "/etc/rustadsb/mcp-token"        # one token of at least 32 characters
+# mcp-bind-address = "0.0.0.0"                    # when net-bind-address keeps the data ports on 127.0.0.1
+# mcp-tls-cert = "/etc/rustadsb/tls/fullchain.pem"  # HTTPS: both lines, or neither (see HTTPS below)
+# mcp-tls-key = "/etc/rustadsb/tls/privkey.pem"
 ```
 
 `sudo ./install.sh --mcp-port 8091` makes a random token in `/etc/rustadsb/mcp-token` (readable by root and the
 `rustadsb` service only) and, on a new install, writes these lines; with an existing file it says what to add.
-Then, with the token:
+Then `sudo systemctl restart rustadsb`. The server is on while `mcp-port` is set: put a `#` in front of it and
+restart to switch it off.
+
+### Adding it to Claude Code
+
+From the computer you run Claude Code on (the `$( )` fetches the token over SSH, so it never shows on screen):
 
 ```sh
-claude mcp add --transport http rustadsb http://<the Pi>:8091/mcp --header "Authorization: Bearer $(ssh pi sudo cat /etc/rustadsb/mcp-token)"
+claude mcp add --transport http --scope user rustadsb https://<pi>:8091/mcp \
+  --header "Authorization: Bearer $(ssh <pi> sudo cat /etc/rustadsb/mcp-token)"
 ```
 
-| Tool | Answers |
+- `--transport http`: MCP's Streamable HTTP transport, which rustadsb speaks. Use `http://` in the address if
+  the server runs without TLS, `https://` with it.
+- `--scope user`: available in all your projects; `--scope local` for the current folder only, `--scope project`
+  to share it through the project's `.mcp.json` (the token would then be in that file: avoid).
+- With a certificate from a public authority (Let's Encrypt, for example) Claude Code trusts it with no extra
+  setup. A self-signed certificate needs `NODE_EXTRA_CA_CERTS=/path/to/cert.pem` in Claude Code's environment.
+
+Check it:
+
+```sh
+claude mcp list          # rustadsb: https://<pi>:8091/mcp (HTTP) - ✓ Connected
+```
+
+Then start a **new** Claude Code session (servers are loaded when a session starts). `/mcp` there lists
+rustadsb and its six tools. Ask in plain language (examples below); Claude Code asks your permission the first
+time it uses each tool, and "always allow" is safe for these, as none changes anything. Its answers show
+"Called rustadsb" when it used the station's tools.
+
+| Problem | Cause |
 |---|---|
-| `station_status` | message rate, aircraft, furthest aircraft, positions, signal and noise, strong signals, dropped samples, uptime, the decoder's CPU and memory |
-| `history` | one entry a minute for up to 24 hours (from the decoder's start): the same figures plus the computer's CPU and temperature |
-| `system` | the computer: CPU, load, memory, temperature, Raspberry Pi under-voltage, disk, Wi-Fi, the rustadsb processes (Linux) |
-| `connections` | feed clients, MLAT results and readers on the decoder's ports, its own connectors, for how long |
-| `aircraft_query` | aircraft heard now (readsb's API format): `closest`, `within` a radius, `box`, `find_hex`, `find_callsign`, `find_squawk`, `all`; around the receiver unless a position is given |
-| `range_outline` | the furthest position heard in each direction |
+| `✗ Failed to connect`, or 401 in the decoder's log | wrong or missing token: `ssh <pi> sudo cat /etc/rustadsb/mcp-token` must print one token of 64 characters |
+| name not found, or no connection | the name or port is not reachable from here (another network, firewall, `mcp-bind-address` still 127.0.0.1) |
+| certificate error | the certificate is not trusted (self-signed: `NODE_EXTRA_CA_CERTS`), or the name in the address is not in the certificate |
+| tools missing after `claude mcp add` | the session was started before: start a new one |
 
-**HTTPS.** With `mcp-tls-cert` and `mcp-tls-key` (PEM files; the certificate chain leaf first) the server speaks
-HTTPS only, TLS 1.2 and 1.3 (rustls). The files are looked at again at most every 10 s: a renewed certificate is
-used without a restart, and one that fails to load is reported while the previous stays in use. The service
-user must be able to read both files.
+`claude mcp remove rustadsb` removes it, stored token included. After a token change (see Token below), remove it
+and add it again.
 
-**Security.** Every request needs `Authorization: Bearer <token>`; the token is compared in constant time and a
-refused request is logged (at most once a minute, without the token). Requests that carry an `Origin` header
-(made by web pages) are refused, so a page open in a browser on the LAN cannot use it. No tool changes
-anything. Callsigns and other aircraft fields come from radio messages anyone can transmit: control characters
-are removed, and the server tells the assistant to treat them as data, never as instructions. Without TLS the
-token crosses the network in the clear: use HTTPS, or keep it to a network you trust.
+**Other MCP clients** work the same way if they speak Streamable HTTP and can send an `Authorization` header.
+A quick test without any client:
 
-How it works: MCP's Streamable HTTP transport, JSON-RPC 2.0 POSTed to `/mcp` and answered with one JSON reply
-(no sessions, no event stream); protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. The
-dashboard's figures are collected whenever the MCP server or the dashboard is on; the aircraft list is rebuilt
-only while someone is asking, so an idle server costs nothing.
+```sh
+curl -s https://<pi>:8091/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"station_status"}}'
+```
+
+### What you can ask
+
+Six tools. You do not call them by name: ask the question, and the assistant picks the tools (often several
+for one question) and explains the answer.
+
+| Tool | Options | What it returns |
+|---|---|---|
+| `station_status` | none | messages per second (last 10 s and last minute), aircraft and how many have a position, the furthest aircraft and positions decoded in the last minute, signal and noise (dBFS), strong signals, dropped samples, the decoder's CPU and memory, uptime; and the maxima over the kept history |
+| `history` | `minutes` (1 to 1440, default 60) | one entry a minute, oldest first: message rate, aircraft, furthest aircraft, positions, signal, noise, strong signals, dropped samples, the computer's CPU and rustadsb's share, temperature. Kept in memory for up to 24 hours, from the decoder's start |
+| `system` | none | the computer: CPU (last 10 s), load average, memory and swap, temperature, Raspberry Pi under-voltage, disk use, Wi-Fi signal, uptime, how many rustadsb processes run and their CPU together (Linux only) |
+| `connections` | none | every open connection: clients on the decoder's ports (`beast out :30005`, `beast in :30104`, ...), its own outgoing connectors, how long each has been connected, counts per port |
+| `aircraft_query` | `query`, plus the options below | the matching aircraft in readsb's API format: `hex`, `flight` (callsign), `alt_baro`, `gs`, `track`, `lat`, `lon`, `squawk`, `category`, `rssi`, `seen`, and `dst` (distance in nm from the query's centre) |
+| `range_outline` | none | the furthest position heard in each direction over the outline period (24 h by default): the station's coverage. Needs the receiver position and `write-json` |
+
+`aircraft_query` searches:
+
+| `query` | Options | Finds |
+|---|---|---|
+| `closest` | `radius_nm` (default 25), `lat`/`lon` (default: the receiver) | the nearest aircraft with a position within the radius |
+| `within` | `radius_nm` (default 25), `lat`/`lon` (default: the receiver) | every aircraft within the radius, each with its distance (`dst`) |
+| `box` | `south`, `north`, `west`, `east` (degrees) | every aircraft inside the box |
+| `find_hex` | `value`: ICAO addresses, comma-separated (`43c5e9,40666c`) | those aircraft |
+| `find_callsign` | `value`: callsigns, comma-separated (`BAW123,RYR5UK`) | those flights |
+| `find_squawk` | `value`: squawk codes, comma-separated (`7700,7600,7500`) | aircraft squawking them |
+| `all` | `with_position` (default true) | every aircraft heard (with a position unless `with_position` is false) |
+
+Questions that work well, and the tools behind them:
+
+| Ask | Uses |
+|---|---|
+| "How is the ADS-B station doing?" | `station_status`, `system`, `connections` |
+| "Is reception normal for this time of day?" / "How many aircraft are we seeing?" | `station_status`, `history` |
+| "When did the message rate drop in the last 6 hours, and did anything else change then?" | `history` (minutes 360) |
+| "Has the receiver dropped any samples today?" / "Is the gain too high?" | `station_status`, `history` (dropped samples, strong signals) |
+| "How far can the station see? Which direction is weakest?" | `range_outline`, `station_status` |
+| "How hot is the Pi, and is the power supply OK?" / "Is the SD card filling up?" | `system` |
+| "How much CPU do the decoder and the feeds use?" | `system`, `station_status` |
+| "Is the Wi-Fi good enough?" | `system` (signal), `connections` (are the feeds connected) |
+| "Which feeds and MLAT clients are connected, and for how long?" | `connections` |
+| "What's the closest aircraft right now?" / "What's flying overhead?" | `aircraft_query` closest |
+| "List the aircraft within 10 nm, lowest first." | `aircraft_query` within, radius 10 |
+| "Any aircraft between London and Brighton?" | `aircraft_query` box |
+| "Is anyone squawking 7700, 7600 or 7500?" | `aircraft_query` find_squawk |
+| "Is BAW123 in range? How high and how far?" / "Where is 43c5e9?" | `aircraft_query` find_callsign / find_hex |
+| "Which aircraft are helicopters (category A7)?" / "Which is the highest?" | `aircraft_query` all |
+| "Compare the last hour with the hour before." | `history` (minutes 120) |
+
+What it does not know: anything older than the decoder's start (the history is in memory and starts again at
+each restart), registrations and types beyond what the aircraft broadcast (rustadsb has no aircraft database),
+and which program is behind a local connection (`connections` shows `127.0.0.1:<port>`; a station with many
+feeders has dozens of them, which is normal).
+
+### HTTPS
+
+With `mcp-tls-cert` and `mcp-tls-key` (PEM files; the certificate chain leaf first) the server speaks HTTPS only,
+TLS 1.2 and 1.3 (rustls). The service user must be able to read both files. The files are looked at again at
+most every 10 s: a renewed certificate is used without a restart, and one that fails to load is reported while
+the previous stays in use.
+
+To switch TLS off, put a `#` in front of **both** lines and restart: the server then speaks plain HTTP on the same
+port, and clients must change `https://` to `http://` (in Claude Code: remove and add it again). Only one of the
+two set is an error, and rustadsb does not start. Without TLS the token crosses the network in the clear: keep
+it to a network you trust.
+
+### Token
+
+`install.sh --mcp-port` makes it: 32 random bytes from `/dev/urandom` as 64 hex characters (256 bits), in
+`/etc/rustadsb/mcp-token`, owner `root:rustadsb`, mode 0640, made only if the file does not exist. rustadsb reads
+it when it starts: at least 32 characters, no spaces, and a warning if every user can read the file.
+
+To rotate it (if it may have leaked):
+
+```sh
+sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/rustadsb/mcp-token.new'
+sudo chown root:rustadsb /etc/rustadsb/mcp-token.new && sudo chmod 0640 /etc/rustadsb/mcp-token.new
+sudo mv /etc/rustadsb/mcp-token.new /etc/rustadsb/mcp-token
+sudo systemctl restart rustadsb        # from now on the old token gets 401
+```
+
+then remove and add the server again in each client.
+
+### Security
+
+Every request needs `Authorization: Bearer <token>`; the token is compared in constant time, and a refused
+request is logged (at most once a minute, without the token). Requests that carry an `Origin` header (made by web
+pages) are refused, so a page open in a browser on the LAN cannot use it. No tool changes anything. Callsigns
+and other aircraft fields come from radio messages anyone can transmit: control characters are removed, and the
+server tells the assistant to treat them as data, never as instructions.
+
+### How it works
+
+MCP's Streamable HTTP transport: JSON-RPC 2.0 POSTed to `/mcp`, each answered with one JSON reply (no sessions,
+no event stream); protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. Each tool returns its
+answer as JSON text and as structured content. The dashboard's figures are collected whenever the MCP server or
+the dashboard is on; the aircraft list is rebuilt only while someone is asking, so an idle server costs nothing.
 
 ## Architecture
 

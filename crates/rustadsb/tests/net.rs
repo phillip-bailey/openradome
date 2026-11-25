@@ -251,3 +251,83 @@ fn dashboard_shows_the_open_connections() {
     );
     assert!(http_get(dash, "/nothing").starts_with("HTTP/1.1 404"));
 }
+
+/// POST a JSON-RPC message to the MCP endpoint and return the whole reply.
+fn mcp_post(port: u16, token: Option<&str>, body: &str) -> String {
+    let mut s = connect(port);
+    let auth = token.map_or(String::new(), |t| format!("Authorization: Bearer {t}\r\n"));
+    write!(
+        s,
+        "POST /mcp HTTP/1.1\r\nHost: test\r\n{auth}Content-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).expect("read reply");
+    out
+}
+
+#[test]
+fn mcp_answers_with_the_token_only() {
+    let _serial = serial();
+    let [bo, mcp] = free_ports();
+    let token = "f00dfeedf00dfeedf00dfeedf00dfeed";
+    let dir = std::env::temp_dir().join(format!("rustadsb-mcp-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let token_file = dir.join("token");
+    std::fs::write(&token_file, format!("{token}\n")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+        .args([
+            "--net-bind-address",
+            "127.0.0.1",
+            "--net-bo-port",
+            &bo.to_string(),
+            "--net-heartbeat",
+            "0",
+            "--quiet",
+            "--mcp-port",
+            &mcp.to_string(),
+            "--mcp-token-file",
+            token_file.to_str().unwrap(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn");
+    let _server = Server(child);
+    let _client = connect(bo);
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
+    assert!(mcp_post(mcp, None, init).starts_with("HTTP/1.1 401"));
+    assert!(
+        mcp_post(mcp, Some("wrong-token-wrong-token-wrong-tok"), init).starts_with("HTTP/1.1 401")
+    );
+    let ok = mcp_post(mcp, Some(token), init);
+    assert!(
+        ok.starts_with("HTTP/1.1 200 OK") && ok.contains(r#""name":"rustadsb""#),
+        "{ok}"
+    );
+    let end = Instant::now() + Duration::from_secs(5);
+    let conns = loop {
+        let r = mcp_post(
+            mcp,
+            Some(token),
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"connections"}}"#,
+        );
+        if r.contains(&format!("beast out :{bo}")) || Instant::now() > end {
+            break r;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(conns.contains(&format!("beast out :{bo}")), "{conns}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mcp_needs_a_token_file() {
+    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+        .args(["--net-only", "--net", "--mcp-port", "0"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--mcp-token-file"));
+}

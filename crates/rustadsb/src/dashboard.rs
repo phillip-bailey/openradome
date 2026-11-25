@@ -10,7 +10,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -176,45 +176,24 @@ pub struct Dashboard {
 
 impl Dashboard {
     /// Listen on `bind:port` and start serving the page.
+    /// Start collecting the figures and, with `listen`, serve the page there. Without `listen` the
+    /// figures are still kept, for the MCP server (see [`Dashboard::handle`]).
     pub fn start(
         rt: &Handle,
-        bind: IpAddr,
-        port: u16,
+        listen: Option<SocketAddr>,
         now: i64,
         local: bool,
         version: &'static str,
     ) -> io::Result<Self> {
-        let std_listener = std::net::TcpListener::bind(SocketAddr::new(bind, port))?;
-        std_listener.set_nonblocking(true)?;
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             version,
             started: now,
             local,
         });
-        let listener = {
-            let _guard = rt.enter();
-            TcpListener::from_std(std_listener)?
-        };
-        let s = shared.clone();
-        let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
-        rt.spawn(async move {
-            loop {
-                match listener.accept().await {
-                    Ok((sock, _)) => {
-                        let Ok(slot) = slots.clone().try_acquire_owned() else {
-                            continue; // too many open: drop this one
-                        };
-                        let s = s.clone();
-                        tokio::spawn(async move {
-                            serve(sock, s, IDLE_TIMEOUT).await;
-                            drop(slot);
-                        });
-                    }
-                    Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
-                }
-            }
-        });
+        if let Some(addr) = listen {
+            serve_page(rt, addr, shared.clone())?;
+        }
         spawn_sampler(rt, shared.clone());
         Ok(Self {
             shared,
@@ -224,6 +203,43 @@ impl Dashboard {
         })
     }
 
+    /// A handle that reads the collected figures (for the MCP server).
+    pub fn handle(&self) -> StatusHandle {
+        StatusHandle(self.shared.clone())
+    }
+}
+
+/// Listen on `addr` and answer page requests.
+fn serve_page(rt: &Handle, addr: SocketAddr, shared: Arc<Shared>) -> io::Result<()> {
+    let std_listener = std::net::TcpListener::bind(addr)?;
+    std_listener.set_nonblocking(true)?;
+    let listener = {
+        let _guard = rt.enter();
+        TcpListener::from_std(std_listener)?
+    };
+    let s = shared;
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    rt.spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((sock, _)) => {
+                    let Ok(slot) = slots.clone().try_acquire_owned() else {
+                        continue; // too many open: drop this one
+                    };
+                    let s = s.clone();
+                    tokio::spawn(async move {
+                        serve(sock, s, IDLE_TIMEOUT).await;
+                        drop(slot);
+                    });
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
+    });
+    Ok(())
+}
+
+impl Dashboard {
     /// Call as time advances, with the bucket the statistics recorder has just closed, if any.
     pub fn tick(&mut self, now: i64, tracker: &Tracker, closed: Option<&StatsBlock>) {
         if let Some(b) = closed {
@@ -268,6 +284,165 @@ impl Dashboard {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.shared.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Reads the dashboard's figures as JSON, for the MCP server. Cheap: it copies what is already kept.
+#[derive(Clone)]
+pub struct StatusHandle(Arc<Shared>);
+
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+impl StatusHandle {
+    /// A handle with nothing collected yet, for tests.
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self(Arc::new(Shared {
+            state: Mutex::new(State::default()),
+            version: "rustadsb test",
+            started: 0,
+            local: true,
+        }))
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The decoder now: rates, aircraft, range, signal, losses, and this process's own use.
+    pub fn status(&self) -> serde_json::Value {
+        let now = net::now_ms();
+        let st = self.state();
+        let last = st.history.back();
+        let day: Vec<&Point> = st.history.iter().filter(|x| x.t >= now - DAY_MS).collect();
+        let covered_min = st
+            .history
+            .front()
+            .map_or(0, |f| (now - f.t) / MINUTE_MS + 1);
+        serde_json::json!({
+            "version": self.0.version,
+            "uptime_s": (now - self.0.started) / 1000,
+            "local_receiver": self.0.local,
+            "messages_total": st.live.messages_total,
+            "messages_per_s_last_10s": round1(st.live.msg_rate),
+            "aircraft": st.live.aircraft,
+            "aircraft_with_position": st.live.with_pos,
+            "last_minute": last.map(|l| serde_json::json!({
+                "messages_per_s": round1(l.msg_rate),
+                "furthest_km": l.range_km.map(round1),
+                "positions": l.positions,
+                "signal_dbfs": l.signal_db.map(round1),
+                "noise_dbfs": l.noise_db.map(round1),
+                "strong_signals": l.strong,
+                "samples_dropped": l.dropped,
+                "process_cpu_pct_of_one_core": l.cpu_pct.map(round1),
+            })),
+            "history_minutes": covered_min.min(HISTORY as i64),
+            "over_history": {
+                "furthest_km": day.iter().filter_map(|x| x.range_km).reduce(f64::max).map(round1),
+                "positions": day.iter().map(|x| x.positions).sum::<u64>(),
+                "samples_dropped": day.iter().map(|x| x.dropped).sum::<u64>(),
+                "max_messages_per_s": day.iter().map(|x| x.msg_rate).reduce(f64::max).map(round1),
+                "max_aircraft": day.iter().map(|x| x.aircraft).max(),
+            },
+            "process_memory_mb": st.live.rss_kb.map(|k| round1(k as f64 / 1024.0)),
+        })
+    }
+
+    /// One entry a minute for the last `minutes` (at most 24 h), oldest first; with the host's
+    /// CPU and temperature where they are known.
+    pub fn history(&self, minutes: usize) -> serde_json::Value {
+        let now = net::now_ms();
+        let st = self.state();
+        let n = minutes.clamp(1, HISTORY);
+        let sys: HashMap<i64, &SysPoint> = st
+            .sys_history
+            .iter()
+            .map(|p| (p.t / MINUTE_MS, p))
+            .collect();
+        let points: Vec<serde_json::Value> = st
+            .history
+            .iter()
+            .rev()
+            .take(n)
+            .rev()
+            .map(|p| {
+                let s = sys
+                    .get(&(p.t / MINUTE_MS))
+                    .or_else(|| sys.get(&(p.t / MINUTE_MS - 1)));
+                serde_json::json!({
+                    "minutes_ago": (now - p.t) / MINUTE_MS,
+                    "time_ms": p.t,
+                    "messages_per_s": round1(p.msg_rate),
+                    "aircraft": p.aircraft,
+                    "with_position": p.with_pos,
+                    "furthest_km": p.range_km.map(round1),
+                    "positions": p.positions,
+                    "signal_dbfs": p.signal_db.map(round1),
+                    "noise_dbfs": p.noise_db.map(round1),
+                    "strong_signals": p.strong,
+                    "samples_dropped": p.dropped,
+                    "host_cpu_pct": s.and_then(|s| s.cpu_pct).map(round1),
+                    "rustadsb_cpu_pct_of_all_cores": s.and_then(|s| s.rustadsb_pct).map(round1),
+                    "temperature_c": s.and_then(|s| s.temp_c).map(round1),
+                })
+            })
+            .collect();
+        serde_json::json!({ "minutes": points.len(), "points": points })
+    }
+
+    /// The host: CPU, load, memory, temperature, power, disk, Wi-Fi, uptime; and the rustadsb processes.
+    pub fn system(&self) -> serde_json::Value {
+        let st = self.state();
+        let Some(sys) = &st.system else {
+            return serde_json::json!({ "available": false, "why": "only read on Linux (/proc and /sys)" });
+        };
+        let s = &sys.sample;
+        let mb = |kb: u64| kb / 1024;
+        serde_json::json!({
+            "available": true,
+            "cpu_pct_all_cores_last_10s": sys.cpu_pct.map(round1),
+            "cores": s.cores,
+            "load_average": s.load,
+            "memory_used_mb": mb(s.mem_total_kb.saturating_sub(s.mem_available_kb)),
+            "memory_total_mb": mb(s.mem_total_kb),
+            "swap_used_mb": mb(s.swap_total_kb.saturating_sub(s.swap_free_kb)),
+            "temperature_c": s.temp_c.map(round1),
+            "undervoltage_now": s.undervoltage,
+            "disk_root": s.disk.map(|(used, avail, size)| serde_json::json!({
+                "used_pct": round1(used as f64 * 100.0 / (used + avail).max(1) as f64),
+                "used_gib": round1(used as f64 / (1u64 << 30) as f64),
+                "size_gib": round1(size as f64 / (1u64 << 30) as f64),
+            })),
+            "wifi": s.wifi.as_ref().map(|(iface, dbm)| serde_json::json!({ "interface": iface, "signal_dbm": dbm })),
+            "host_uptime_s": s.uptime_s.map(|u| u as u64),
+            "rustadsb_processes": sys.rustadsb_count,
+            "rustadsb_cpu_pct_of_one_core_last_minute": sys.rustadsb_core_pct.map(round1),
+        })
+    }
+
+    /// Open connections: clients on the decoder's ports and its own connectors, with counts by kind.
+    pub fn connections(&self) -> serde_json::Value {
+        let now = net::now_ms();
+        let list = net::clients();
+        let mut by_kind: std::collections::BTreeMap<String, usize> = Default::default();
+        for c in &list {
+            *by_kind.entry(c.kind.clone()).or_default() += 1;
+        }
+        let items: Vec<serde_json::Value> = list
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "kind": c.kind,
+                    "peer": c.peer,
+                    "direction": if c.outgoing { "outgoing" } else { "incoming" },
+                    "connected_s": (now - c.since_ms).max(0) / 1000,
+                })
+            })
+            .collect();
+        serde_json::json!({ "total": list.len(), "by_kind": by_kind, "connections": items })
     }
 }
 

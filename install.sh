@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
-#   sudo ./install.sh --archive rustadsb-v0.4.0-linux-armv7.tar.gz --lat ... --lon ...
+#   sudo ./install.sh --archive rustadsb-v0.5.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
 #   sudo ./install.sh --uninstall [--purge]
 #
@@ -29,13 +29,14 @@ PREFIX=/usr/local/bin
 BIN="$PREFIX/rustadsb"
 CONF=/etc/rustadsb/rustadsb.toml
 LEGACY=/etc/default/rustadsb   # the options file before 0.4 (shell variables), still read until migrated
+MCP_TOKEN=/etc/rustadsb/mcp-token
 UNIT=/etc/systemd/system/rustadsb.service
 UDEV=/etc/udev/rules.d/60-rustadsb-rtlsdr.rules
 BLACKLIST=/etc/modprobe.d/rustadsb-blacklist-dvb.conf
 USER_NAME=rustadsb
 
 LAT="" LON="" GAIN="49.6" JSON_DIR="/run/rustadsb" BIND="0.0.0.0" ARCHIVE="" REPLACE=0 UNINSTALL=0 PURGE=0 START=1
-ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}" DASHBOARD_PORT="" MIGRATE=0
+ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}" DASHBOARD_PORT="" MIGRATE=0 MCP_PORT=""
 
 usage() {
   sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
@@ -50,6 +51,7 @@ Options:
   --bind ADDR           address the network ports listen on (default 0.0.0.0; 127.0.0.1 = this host only)
   --dashboard-port PORT serve the status web page on PORT (off by default; see the README)
   --migrate-config      convert an older /etc/default/rustadsb into /etc/rustadsb/rustadsb.toml
+  --mcp-port PORT       serve the MCP server on PORT, with a new random token in /etc/rustadsb/mcp-token
   --replace             stop and disable dump1090 if it is running (it holds the dongle)
   --no-start            install everything but do not start the service
   --rollback            put the previous binary (rustadsb.prev) back and restart
@@ -74,6 +76,7 @@ while [ $# -gt 0 ]; do
     --bind) BIND="$2"; shift 2 ;;
     --dashboard-port) DASHBOARD_PORT="$2"; shift 2 ;;
     --migrate-config) MIGRATE=1; shift ;;
+    --mcp-port) MCP_PORT="$2"; shift 2 ;;
     --replace) REPLACE=1; shift ;;
     --no-start) START=0; shift ;;
     --rollback) ROLLBACK=1; shift ;;
@@ -126,7 +129,7 @@ if [ "$UNINSTALL" = 1 ]; then
   rm -f "$UNIT" "$BIN" "$BIN.prev" "$UDEV" "$BLACKLIST"
   [ "$HAVE_SYSTEMD" = 1 ] && systemctl daemon-reload
   if [ "$PURGE" = 1 ]; then
-    rm -f "$CONF" "$LEGACY"
+    rm -f "$CONF" "$LEGACY" "$MCP_TOKEN"
     rmdir "$(dirname "$CONF")" 2>/dev/null || true
     rm -rf /var/lib/rustadsb
     id "$USER_NAME" >/dev/null 2>&1 && userdel "$USER_NAME"
@@ -294,6 +297,10 @@ lon = $LON"; else
 # lon = -0.1"
     echo "note: no --lat/--lon given; set lat and lon in $CONF for the range outline and single-message positions" >&2
   fi
+  MCP_LINES="# mcp-port = 8091                    # MCP server for AI assistants (needs mcp-token-file)
+# mcp-token-file = \"$MCP_TOKEN\"   # install.sh --mcp-port makes one"
+  [ -z "$MCP_PORT" ] || MCP_LINES="mcp-port = $MCP_PORT                     # MCP server for AI assistants: http://<this host>:$MCP_PORT/mcp
+mcp-token-file = \"$MCP_TOKEN\"   # clients send: Authorization: Bearer <the token in it>"
   DASH_LINE="# dashboard-port = 8090              # the status web page: http://<this host>:8090/"
   [ -z "$DASHBOARD_PORT" ] || DASH_LINE="dashboard-port = $DASHBOARD_PORT                # the status web page: http://<this host>:$DASHBOARD_PORT/"
   mkdir -p "$(dirname "$CONF")"
@@ -324,6 +331,10 @@ net-bi-port = "30004,30104"
 net-bo-port = 30005
 $DASH_LINE
 # dashboard-bind-address = "0.0.0.0"  # the page on the LAN while net-bind-address keeps the data ports local
+$MCP_LINES
+# mcp-bind-address = "0.0.0.0"        # MCP on the LAN while net-bind-address keeps the data ports local
+# mcp-tls-cert = "/etc/rustadsb/tls/cert.pem"   # HTTPS for MCP (PEM, leaf first; reloaded when renewed)
+# mcp-tls-key = "/etc/rustadsb/tls/key.pem"
 
 # Output
 json-location-accuracy = 2
@@ -337,6 +348,18 @@ quiet = true
 # net-api-port = 8080                 # the HTTP API (/re-api)
 EOF
   say "wrote $CONF"
+fi
+if [ -n "$MCP_PORT" ]; then
+  # a random token only root and the rustadsb service can read; kept if there already is one
+  if [ ! -s "$MCP_TOKEN" ]; then
+    mkdir -p "$(dirname "$MCP_TOKEN")"
+    (umask 077; od -An -tx1 -N32 /dev/urandom | tr -d ' \n' >"$MCP_TOKEN")
+    say "made an MCP token in $MCP_TOKEN (read it with: sudo cat $MCP_TOKEN)"
+  fi
+  chown "root:$(id -gn "$USER_NAME")" "$MCP_TOKEN" && chmod 0640 "$MCP_TOKEN"
+  if [ "$MODE" = toml ] && ! grep -v '^[[:space:]]*#' "$CONF" | grep -q 'mcp-port'; then
+    echo "note: $CONF is kept as it is; to turn MCP on, add there: mcp-port = $MCP_PORT and mcp-token-file = \"$MCP_TOKEN\", then restart" >&2
+  fi
 fi
 if [ "$MODE" = toml ]; then
   # the unit's runtime directory follows the file's write-json
@@ -407,6 +430,11 @@ if systemctl is-active --quiet rustadsb && [ -s "$JSON_DIR/aircraft.json" ]; the
   say "rustadsb is running: $JSON_DIR/aircraft.json, Beast on port 30005. Logs: journalctl -u rustadsb"
   DASH=$(grep -v '^[[:space:]]*#' "$OPTIONS_FILE" | grep -oE 'dashboard-port[ =]+[0-9]+' | grep -oE '[0-9]+$' | head -1 || true)
   [ -z "$DASH" ] || say "dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$DASH/"
+  MCP=$(grep -v '^[[:space:]]*#' "$OPTIONS_FILE" | grep -oE 'mcp-port[ =]+[0-9]+' | grep -oE '[0-9]+$' | head -1 || true)
+  if [ -n "$MCP" ]; then
+    SCHEME=http; grep -v '^[[:space:]]*#' "$OPTIONS_FILE" | grep -q 'mcp-tls-cert' && SCHEME=https
+    say "MCP: $SCHEME://$(hostname -I 2>/dev/null | awk '{print $1}'):$MCP/mcp (token: sudo cat $MCP_TOKEN)"
+  fi
 else
   systemctl --no-pager status rustadsb | tail -15 >&2 || true
   die "rustadsb did not come up (is the dongle plugged in? reboot once if the DVB-T driver was loaded)"

@@ -160,6 +160,8 @@ decoder attached to the dongle, and the small per-network feed clients that forw
   sort order, drawn with plain ANSI codes.
 - **Dashboard** (`--dashboard-port <port>`, rustadsb only, off unless given): a status web page. See
   [Dashboard](#dashboard).
+- **MCP server** (`--mcp-port <port>`, rustadsb only, off unless given): read-only tools an AI assistant can
+  ask about the station, over HTTP or HTTPS, behind a token. See [MCP server](#mcp-server).
 - **Configuration file** (`--config <file.toml>`, `--print-config`; rustadsb only): every option from a TOML
   file. See [Configuration file](#configuration-file).
 - `--stats`, `--raw`, `--onlyaddr`, `--show-only`, `--filter-DF` for the terminal.
@@ -233,6 +235,7 @@ As with upstream, a single-value option given twice takes the last value, which 
 | `stats.json` | every 10 s | receiver and tracker statistics |
 | `outline.json` | every 15 s | farthest position per direction |
 | `<--write-state>/internal_state/rangeDirs.gz` | every 5 min and at exit | the range outline, in upstream's format |
+| MCP server | `--mcp-port 8091` (off unless given) | `/mcp`: Model Context Protocol tools for AI assistants, token required |
 | Dashboard | `--dashboard-port 8090` (off unless given) | status web page: live figures, system figures, 24 h graphs, open connections |
 
 JSON files are written to a temporary file and renamed, so readers never see a partial file.
@@ -275,6 +278,53 @@ it answers `GET` for `/` and nothing else changes anything. It listens on `--das
 `--net-bind-address` like the other ports. So a station whose data ports are kept local
 (`--net-bind-address 127.0.0.1`) can still show the page on the LAN with `--dashboard-bind-address 0.0.0.0` (or the
 Pi's LAN address). There is no password, so do not expose the port to the internet.
+
+## MCP server
+
+An optional [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI assistant (Claude Code,
+Claude Desktop, any MCP client) can ask the station how it is doing: "how is reception tonight?", "when did
+the message rate drop?", "what is the low aircraft over the house?". Off unless you give a port; read-only.
+
+```toml
+# /etc/rustadsb/rustadsb.toml
+mcp-port = 8091
+mcp-token-file = "/etc/rustadsb/mcp-token"     # one token of at least 32 characters
+# mcp-bind-address = "0.0.0.0"                 # when net-bind-address keeps the data ports on 127.0.0.1
+```
+
+`sudo ./install.sh --mcp-port 8091` makes a random token in `/etc/rustadsb/mcp-token` (readable by root and the
+`rustadsb` service only) and, on a new install, writes these lines; with an existing file it says what to add.
+Then, with the token:
+
+```sh
+claude mcp add --transport http rustadsb http://<the Pi>:8091/mcp --header "Authorization: Bearer $(ssh pi sudo cat /etc/rustadsb/mcp-token)"
+```
+
+| Tool | Answers |
+|---|---|
+| `station_status` | message rate, aircraft, furthest aircraft, positions, signal and noise, strong signals, dropped samples, uptime, the decoder's CPU and memory |
+| `history` | one entry a minute for up to 24 hours (from the decoder's start): the same figures plus the computer's CPU and temperature |
+| `system` | the computer: CPU, load, memory, temperature, Raspberry Pi under-voltage, disk, Wi-Fi, the rustadsb processes (Linux) |
+| `connections` | feed clients, MLAT results and readers on the decoder's ports, its own connectors, for how long |
+| `aircraft_query` | aircraft heard now (readsb's API format): `closest`, `within` a radius, `box`, `find_hex`, `find_callsign`, `find_squawk`, `all`; around the receiver unless a position is given |
+| `range_outline` | the furthest position heard in each direction |
+
+**HTTPS.** With `mcp-tls-cert` and `mcp-tls-key` (PEM files; the certificate chain leaf first) the server speaks
+HTTPS only, TLS 1.2 and 1.3 (rustls). The files are looked at again at most every 10 s: a renewed certificate is
+used without a restart, and one that fails to load is reported while the previous stays in use. The service
+user must be able to read both files.
+
+**Security.** Every request needs `Authorization: Bearer <token>`; the token is compared in constant time and a
+refused request is logged (at most once a minute, without the token). Requests that carry an `Origin` header
+(made by web pages) are refused, so a page open in a browser on the LAN cannot use it. No tool changes
+anything. Callsigns and other aircraft fields come from radio messages anyone can transmit: control characters
+are removed, and the server tells the assistant to treat them as data, never as instructions. Without TLS the
+token crosses the network in the clear: use HTTPS, or keep it to a network you trust.
+
+How it works: MCP's Streamable HTTP transport, JSON-RPC 2.0 POSTed to `/mcp` and answered with one JSON reply
+(no sessions, no event stream); protocol versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. The
+dashboard's figures are collected whenever the MCP server or the dashboard is on; the aircraft list is rebuilt
+only while someone is asking, so an idle server costs nothing.
 
 ## Architecture
 

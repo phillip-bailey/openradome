@@ -38,8 +38,9 @@ World Magnetic Model (WMM2025): coefficients and the geomagnetic code from the U
 and Atmospheric Administration (NOAA) and the National Geospatial-Intelligence Agency; in the public
 domain in the United States.
 
-rustadsb's dependencies (tokio, clap, flate2, ruzstd, nusb, rtlsdr-nusb, socket2 and the crates they
-pull in) are under the MIT and/or Apache-2.0 licences; see each crate's own licence.
+rustadsb's dependencies (tokio, clap, flate2, ruzstd, nusb, rtlsdr-nusb, socket2, serde_json, toml,
+rustls, tokio-rustls and the crates they pull in) are under the MIT, Apache-2.0 and/or ISC licences; ring
+(rustls's cryptography) is under Apache-2.0 AND ISC. See each crate's own licence.
 
 
 The BSD licence of the original dump1090

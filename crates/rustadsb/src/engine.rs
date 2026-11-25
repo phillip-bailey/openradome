@@ -44,6 +44,8 @@ pub struct Engine<'a> {
     pub state: Option<StateWriter>,
     /// `--dashboard-port`: the status web page.
     pub dashboard: Option<Dashboard>,
+    /// `--mcp-port`: the MCP server.
+    pub mcp: Option<crate::mcp::Mcp>,
     /// The 10 s statistics buckets behind `stats.json` and the dashboard (when either is on).
     pub recorder: Option<StatsRecorder>,
     pub net_rx: Option<Receiver<WireItem>>,
@@ -73,6 +75,7 @@ impl<'a> Engine<'a> {
             api: None,
             state: None,
             dashboard: None,
+            mcp: None,
             recorder: None,
             net_rx: None,
             remote: RemoteStats::default(),
@@ -326,6 +329,9 @@ impl<'a> Engine<'a> {
         }
         if let Some(api) = self.api.as_mut() {
             api.tick(now, &self.tracker);
+        }
+        if let Some(m) = self.mcp.as_mut() {
+            m.tick(now, &self.tracker);
         }
         if let Some(ui) = self.interactive.as_mut() {
             ui.show(now, &self.tracker);

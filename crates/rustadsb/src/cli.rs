@@ -160,6 +160,30 @@ pub struct Cli {
     /// reached from the LAN while the data ports stay on 127.0.0.1
     #[arg(long, value_name = "ip", help_heading = "Network options")]
     pub dashboard_bind_address: Option<std::net::IpAddr>,
+    /// Serve a Model Context Protocol (MCP) server on this port, at /mcp: read-only tools an AI
+    /// assistant can ask about the station (rustadsb only; off unless given; needs --mcp-token-file)
+    #[arg(long, value_name = "port", help_heading = "Network options")]
+    pub mcp_port: Option<u16>,
+    /// Address the MCP server listens on (default: --net-bind-address, else any)
+    #[arg(long, value_name = "ip", help_heading = "Network options")]
+    pub mcp_bind_address: Option<std::net::IpAddr>,
+    /// File holding the token MCP clients must send (Authorization: Bearer ...), at least 32 characters
+    #[arg(long, value_name = "file", help_heading = "Network options")]
+    pub mcp_token_file: Option<std::path::PathBuf>,
+    /// Serve MCP over HTTPS with this certificate (PEM, leaf first; reloaded when it changes)
+    #[arg(
+        long = "mcp-tls-cert",
+        value_name = "file.pem",
+        help_heading = "Network options"
+    )]
+    pub mcp_tls_cert: Option<std::path::PathBuf>,
+    /// The private key for --mcp-tls-cert (PEM)
+    #[arg(
+        long = "mcp-tls-key",
+        value_name = "file.pem",
+        help_heading = "Network options"
+    )]
+    pub mcp_tls_key: Option<std::path::PathBuf>,
     /// Write specially indexed globe_xxxx.binCraft files and traces (for tar1090)
     #[arg(long, help_heading = "General options")]
     pub write_json_globe_index: bool,

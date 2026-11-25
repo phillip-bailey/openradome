@@ -6,6 +6,7 @@ mod engine;
 mod globefiles;
 mod interactive;
 mod jsonout;
+mod mcp;
 mod net;
 mod sdr;
 mod state;
@@ -213,22 +214,43 @@ fn run(cli: &Cli) -> Result<(), String> {
     if cli.write_json.is_some() || cli.dashboard_port.is_some() {
         engine.recorder = Some(rustadsb_core::json::StatsRecorder::new(startup));
     }
-    if let Some(port) = cli.dashboard_port {
-        let bind = cli
-            .dashboard_bind_address
-            .or(cli.net_bind_address)
-            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    // the dashboard's figures are collected for its page and for the MCP server
+    if cli.dashboard_port.is_some() || cli.mcp_port.is_some() {
+        let any = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        let listen = cli.dashboard_port.map(|port| {
+            let bind = cli
+                .dashboard_bind_address
+                .or(cli.net_bind_address)
+                .unwrap_or(any);
+            std::net::SocketAddr::new(bind, port)
+        });
         engine.dashboard = Some(
             dashboard::Dashboard::start(
                 runtime.handle(),
-                bind,
-                port,
+                listen,
                 startup,
                 !net_only,
                 jsonout::VERSION_STRING,
             )
-            .map_err(|e| format!("can't listen for the dashboard on port {port}: {e}"))?,
+            .map_err(|e| format!("can't listen for the dashboard on {listen:?}: {e}"))?,
         );
+    }
+    if let Some(port) = cli.mcp_port {
+        let any = std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+        let bind = cli.mcp_bind_address.or(cli.net_bind_address).unwrap_or(any);
+        let status = engine
+            .dashboard
+            .as_ref()
+            .map(dashboard::Dashboard::handle)
+            .ok_or("mcp: no figures to serve")?;
+        engine.mcp = Some(mcp::Mcp::start(
+            runtime.handle(),
+            std::net::SocketAddr::new(bind, port),
+            &mcp::Settings::from_cli(cli)?,
+            status,
+            startup,
+            engine.tracker.cfg.user_location,
+        )?);
     }
     if let Some(dir) = &cli.write_json {
         engine.json = Some(

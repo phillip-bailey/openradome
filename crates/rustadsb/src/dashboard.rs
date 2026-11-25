@@ -28,8 +28,12 @@ const MINUTE_MS: i64 = 60_000;
 const DAY_MS: i64 = 24 * 60 * MINUTE_MS;
 /// A request larger than this is refused.
 const REQUEST_MAX: usize = 8 * 1024;
-/// How long a client may take to send its request.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a connection may stay open without a complete request. Browsers open spare
+/// connections in advance and send nothing on them until the next page load, so such a connection
+/// is closed silently: anything written to it would be read as the reply to that later request.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Connections served at once; more are closed straight away.
+const MAX_CONNECTIONS: usize = 64;
 /// How often the page reloads itself, in seconds.
 const REFRESH_S: u32 = 10;
 
@@ -168,11 +172,19 @@ impl Dashboard {
             TcpListener::from_std(std_listener)?
         };
         let s = shared.clone();
+        let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
         rt.spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((sock, _)) => {
-                        tokio::spawn(serve(sock, s.clone()));
+                        let Ok(slot) = slots.clone().try_acquire_owned() else {
+                            continue; // too many open: drop this one
+                        };
+                        let s = s.clone();
+                        tokio::spawn(async move {
+                            serve(sock, s, IDLE_TIMEOUT).await;
+                            drop(slot);
+                        });
                     }
                     Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
                 }
@@ -266,51 +278,60 @@ fn process_rss_kb() -> Option<u64> {
 
 // ---- HTTP ----------------------------------------------------------------------------------------
 
-async fn serve(mut sock: TcpStream, shared: Arc<Shared>) {
+/// What reading a request found.
+enum Request {
+    Complete,
+    TooLarge,
+    /// Closed, or nothing complete within the idle timeout: close without a word.
+    Nothing,
+}
+
+async fn serve(mut sock: TcpStream, shared: Arc<Shared>, idle: Duration) {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let read = async {
         loop {
             if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                return true;
+                return Request::Complete;
             }
             if buf.len() > REQUEST_MAX {
-                return false;
+                return Request::TooLarge;
             }
             match sock.read(&mut chunk).await {
-                Ok(0) | Err(_) => return false,
+                Ok(0) | Err(_) => return Request::Nothing,
                 Ok(n) => buf.extend_from_slice(&chunk[..n]),
             }
         }
     };
-    let complete = matches!(tokio::time::timeout(REQUEST_TIMEOUT, read).await, Ok(true));
-    let reply = if complete {
-        let page = || {
-            let (history, live) = {
-                let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    st.history.iter().cloned().collect::<Vec<_>>(),
-                    st.live.clone(),
-                )
+    let reply = match tokio::time::timeout(idle, read).await {
+        Ok(Request::Complete) => {
+            let page = || {
+                let (history, live) = {
+                    let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+                    (
+                        st.history.iter().cloned().collect::<Vec<_>>(),
+                        st.live.clone(),
+                    )
+                };
+                render(&PageData {
+                    version: shared.version,
+                    started: shared.started,
+                    local: shared.local,
+                    now: live.now.max(net::now_ms()),
+                    live,
+                    history,
+                    clients: net::clients(),
+                })
             };
-            render(&PageData {
-                version: shared.version,
-                started: shared.started,
-                local: shared.local,
-                now: live.now.max(net::now_ms()),
-                live,
-                history,
-                clients: net::clients(),
-            })
-        };
-        respond(&buf, page)
-    } else {
-        reply(
-            "400 Bad Request",
+            respond(&buf, page)
+        }
+        Ok(Request::TooLarge) => reply(
+            "431 Request Header Fields Too Large",
             "text/plain; charset=utf-8",
-            b"bad request\n",
+            b"request too large\n",
             false,
-        )
+        ),
+        Ok(Request::Nothing) | Err(_) => return,
     };
     let _ = sock.write_all(&reply).await;
     let _ = sock.shutdown().await;
@@ -1038,6 +1059,54 @@ mod tests {
         assert_eq!(ago(DAY_MS / 4 * 3), "−18 h");
         assert_eq!(span_words(h), "hour");
         assert_eq!(span_words(8 * h), "8 hours");
+    }
+
+    fn test_shared() -> Arc<Shared> {
+        Arc::new(Shared {
+            state: Mutex::new(State::default()),
+            version: "t",
+            started: 0,
+            local: false,
+        })
+    }
+
+    /// A browser's spare connection that never sends a request must get no reply at all: a reply
+    /// would be read as the answer to the browser's next request ("bad request" on reload).
+    #[tokio::test]
+    async fn an_idle_connection_is_closed_without_a_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sh = test_shared();
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            serve(sock, sh, Duration::from_millis(100)).await;
+        });
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).await.unwrap();
+        assert!(got.is_empty(), "{}", String::from_utf8_lossy(&got));
+    }
+
+    #[tokio::test]
+    async fn a_request_sent_slowly_is_answered() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let sh = test_shared();
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            serve(sock, sh, Duration::from_secs(5)).await;
+        });
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        c.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        c.write_all(b"Host: pi\r\n\r\n").await.unwrap();
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).await.unwrap();
+        let got = String::from_utf8_lossy(&got);
+        assert!(
+            got.starts_with("HTTP/1.1 200 OK") && got.contains("</html>"),
+            "{got}"
+        );
     }
 
     #[test]

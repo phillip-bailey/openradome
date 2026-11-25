@@ -33,7 +33,7 @@ BLACKLIST=/etc/modprobe.d/rustadsb-blacklist-dvb.conf
 USER_NAME=rustadsb
 
 LAT="" LON="" GAIN="49.6" JSON_DIR="/run/rustadsb" BIND="0.0.0.0" ARCHIVE="" REPLACE=0 UNINSTALL=0 PURGE=0 START=1
-ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}"
+ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}" DASHBOARD_PORT=""
 
 usage() {
   sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
@@ -46,6 +46,7 @@ Options:
                         next to it if there is one)
   --json-dir DIR        where aircraft.json goes (default /run/rustadsb, directly under /run)
   --bind ADDR           address the network ports listen on (default 0.0.0.0; 127.0.0.1 = this host only)
+  --dashboard-port PORT serve the status web page on PORT (off by default; see the README)
   --replace             stop and disable dump1090 if it is running (it holds the dongle)
   --no-start            install everything but do not start the service
   --rollback            put the previous binary (rustadsb.prev) back and restart
@@ -68,6 +69,7 @@ while [ $# -gt 0 ]; do
     --archive) ARCHIVE="$2"; shift 2 ;;
     --json-dir) JSON_DIR="$2"; shift 2 ;;
     --bind) BIND="$2"; shift 2 ;;
+    --dashboard-port) DASHBOARD_PORT="$2"; shift 2 ;;
     --replace) REPLACE=1; shift ;;
     --no-start) START=0; shift ;;
     --rollback) ROLLBACK=1; shift ;;
@@ -253,15 +255,19 @@ if [ ! -f "$CONF" ]; then
 # Edit, then: sudo systemctl restart rustadsb. The installer never overwrites this file.
 RECEIVER_OPTIONS="--device-type rtlsdr --device 0 --gain $GAIN --ppm 0"
 DECODER_OPTIONS="$POS --max-range 450 --fix --write-json-every 1"
-NET_OPTIONS="--net --net-bind-address $BIND --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005"
+NET_OPTIONS="--net --net-bind-address $BIND --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005${DASHBOARD_PORT:+ --dashboard-port $DASHBOARD_PORT}"
 JSON_OPTIONS="--json-location-accuracy 2 --range-outline-hours 24"
 # Optional extras, add to JSON_OPTIONS or NET_OPTIONS:
 #   --write-json-globe-index          globe tiles and traces for tar1090
 #   --net-api-port 8080               the HTTP API (/re-api)
+#   --dashboard-port 8090             the status web page: http://<this host>:8090/
 EOF
   say "wrote $CONF"
 else
   say "kept your $CONF"
+  if [ -n "$DASHBOARD_PORT" ] && ! grep -q -- '--dashboard-port' "$CONF"; then
+    echo "note: $CONF is kept as it is; to turn the dashboard on, add --dashboard-port $DASHBOARD_PORT to NET_OPTIONS there and restart" >&2
+  fi
 fi
 
 RUNDIR=$(basename "$JSON_DIR")
@@ -314,6 +320,8 @@ done
 if systemctl is-active --quiet rustadsb && [ -s "$JSON_DIR/aircraft.json" ]; then
   restart_stale
   say "rustadsb is running: $JSON_DIR/aircraft.json, Beast on port 30005. Logs: journalctl -u rustadsb"
+  DASH=$(grep -oE -- '--dashboard-port[ =][0-9]+' "$CONF" | grep -oE '[0-9]+$' | head -1 || true)
+  [ -z "$DASH" ] || say "dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$DASH/"
 else
   systemctl --no-pager status rustadsb | tail -15 >&2 || true
   die "rustadsb did not come up (is the dongle plugged in? reboot once if the DVB-T driver was loaded)"

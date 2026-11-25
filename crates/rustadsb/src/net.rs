@@ -3,6 +3,7 @@
 //! engine runs on its own thread and talks to this module through a [`Hub`] (outgoing) and a
 //! channel of [`WireItem`]s (incoming).
 
+use std::collections::BTreeMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr, TcpListener as StdListener};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,6 +18,59 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 
 pub type Chunk = Arc<Vec<u8>>;
+
+/// A connection that is open right now: a client on one of our ports, or one of our connectors.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientInfo {
+    /// What it is, such as `beast out :30005` or `beast_reduce_plus_out`.
+    pub kind: String,
+    /// The other end (`address:port`, or `host:port` for a connector).
+    pub peer: String,
+    /// We connected out (a `--net-connector`), rather than it connecting to us.
+    pub outgoing: bool,
+    /// When it connected, in ms since the Unix epoch.
+    pub since_ms: i64,
+}
+
+static CLIENTS: LazyLock<Mutex<BTreeMap<u64, ClientInfo>>> = LazyLock::new(Default::default);
+static NEXT_CLIENT: AtomicU64 = AtomicU64::new(0);
+
+/// Keeps a connection in [`clients`] for as long as it lives.
+pub struct ClientGuard(u64);
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        CLIENTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+fn register_client(kind: String, peer: String, outgoing: bool) -> ClientGuard {
+    let id = NEXT_CLIENT.fetch_add(1, Ordering::Relaxed);
+    let info = ClientInfo {
+        kind,
+        peer,
+        outgoing,
+        since_ms: now_ms(),
+    };
+    CLIENTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(id, info);
+    ClientGuard(id)
+}
+
+/// The connections open right now, oldest first.
+pub fn clients() -> Vec<ClientInfo> {
+    CLIENTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect()
+}
 
 pub const BEAST_HEARTBEAT: [u8; 11] = [0x1a, b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0];
 pub const RAW_HEARTBEAT: &[u8] = b"*0000;\n";
@@ -226,6 +280,19 @@ impl Proto {
             _ => return None,
         })
     }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::BeastIn => "beast_in",
+            Self::BeastOut => "beast_out",
+            Self::BeastReduceOut => "beast_reduce_out",
+            Self::BeastReducePlusOut => "beast_reduce_plus_out",
+            Self::RawIn => "raw_in",
+            Self::RawOut => "raw_out",
+            Self::SbsOut => "sbs_out",
+            Self::UatIn => "uat_in",
+        }
+    }
 }
 
 /// A `--net-connector IP,PORT,PROTOCOL[,IP2,PORT2][,silent_fail][,uuid=UUID]` entry, as
@@ -344,22 +411,36 @@ fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
 pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>) -> io::Result<()> {
     let _guard = rt.enter();
     let outputs = [
-        (&cfg.raw_out, hub.raw.clone(), RAW_HEARTBEAT.to_vec(), false),
         (
+            "raw out",
+            &cfg.raw_out,
+            hub.raw.clone(),
+            RAW_HEARTBEAT.to_vec(),
+            false,
+        ),
+        (
+            "beast out",
             &cfg.beast_out,
             hub.beast.clone(),
             BEAST_HEARTBEAT.to_vec(),
             true,
         ),
-        (&cfg.sbs_out, hub.sbs.clone(), SBS_HEARTBEAT.to_vec(), false),
         (
+            "sbs out",
+            &cfg.sbs_out,
+            hub.sbs.clone(),
+            SBS_HEARTBEAT.to_vec(),
+            false,
+        ),
+        (
+            "beast_reduce out",
             &cfg.beast_reduce_out,
             hub.beast_reduce.clone(),
             BEAST_HEARTBEAT.to_vec(),
             true,
         ),
     ];
-    for (ports, sender, heartbeat, beast) in outputs {
+    for (name, ports, sender, heartbeat, beast) in outputs {
         for &port in ports {
             let listener = bind(SocketAddr::new(cfg.bind, port)).map_err(|e| {
                 io::Error::new(e.kind(), format!("can't listen on port {port}: {e}"))
@@ -371,7 +452,8 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
                         continue;
                     };
                     set_sockopts(&sock);
-                    tokio::spawn(serve_output(
+                    let guard = register_client(format!("{name} :{port}"), peer.to_string(), false);
+                    let served = serve_output(
                         sock,
                         sender.subscribe(),
                         heartbeat.clone(),
@@ -379,13 +461,20 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
                         beast,
                         None,
                         peer.to_string(),
-                    ));
+                    );
+                    tokio::spawn(async move {
+                        let _guard = guard;
+                        served.await
+                    });
                 }
             });
         }
     }
-    let inputs = [(&cfg.raw_in, false), (&cfg.beast_in, true)];
-    for (ports, beast) in inputs {
+    let inputs = [
+        ("raw in", &cfg.raw_in, false),
+        ("beast in", &cfg.beast_in, true),
+    ];
+    for (name, ports, beast) in inputs {
         for &port in ports {
             let listener = bind(SocketAddr::new(cfg.bind, port)).map_err(|e| {
                 io::Error::new(e.kind(), format!("can't listen on port {port}: {e}"))
@@ -393,11 +482,16 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
             let tx = tx.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((sock, _)) = listener.accept().await else {
+                    let Ok((sock, peer)) = listener.accept().await else {
                         continue;
                     };
                     set_sockopts(&sock);
-                    tokio::spawn(serve_input(sock, beast, tx.clone(), None));
+                    let guard = register_client(format!("{name} :{port}"), peer.to_string(), false);
+                    let served = serve_input(sock, beast, tx.clone(), None);
+                    tokio::spawn(async move {
+                        let _guard = guard;
+                        served.await
+                    });
                 }
             });
         }
@@ -466,6 +560,7 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
                 });
                 let connected_at = Instant::now();
                 set_sockopts(&sock);
+                let guard = register_client(c.proto.name().to_string(), label.clone(), true);
                 match c.proto {
                     Proto::BeastIn => serve_input(sock, true, tx.clone(), idle).await,
                     Proto::RawIn => serve_input(sock, false, tx.clone(), idle).await,
@@ -519,6 +614,7 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
                     }
                     Proto::UatIn => unreachable!("uat_in connectors are skipped above"),
                 }
+                drop(guard);
                 // Say so when the other side hangs up: a network that keeps refusing the station
                 // (ADSBHub does until it is registered) should be visible. Short-lived
                 // connections in a row are logged the first few times, then only now and then.

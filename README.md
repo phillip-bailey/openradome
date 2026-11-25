@@ -158,6 +158,8 @@ decoder attached to the dongle, and the small per-network feed clients that forw
 - **Interactive mode** (`--interactive`, `--interactive-ttl`, `--no-interactive`; run as `viewadsb` it connects to
   `127.0.0.1:30005`): the aircraft table on the terminal, upstream's columns, units (`--metric`, `--gnss`) and
   sort order, drawn with plain ANSI codes.
+- **Dashboard** (`--dashboard-port <port>`, rustadsb only, off unless given): a status web page. See
+  [Dashboard](#dashboard).
 - `--stats`, `--raw`, `--onlyaddr`, `--show-only`, `--filter-DF` for the terminal.
 
 ## Not implemented
@@ -229,8 +231,42 @@ As with upstream, a single-value option given twice takes the last value, which 
 | `stats.json` | every 10 s | receiver and tracker statistics |
 | `outline.json` | every 15 s | farthest position per direction |
 | `<--write-state>/internal_state/rangeDirs.gz` | every 5 min and at exit | the range outline, in upstream's format |
+| Dashboard | `--dashboard-port 8090` (off unless given) | status web page: live figures, 24 h graphs, open connections |
 
 JSON files are written to a temporary file and renamed, so readers never see a partial file.
+
+## Dashboard
+
+An optional status page, served by rustadsb itself. It is off unless you give a port. With `install.sh`, add
+it to `NET_OPTIONS` in `/etc/default/rustadsb` (or install with `--dashboard-port 8090`), then restart:
+
+```sh
+# /etc/default/rustadsb
+NET_OPTIONS="--net ... --net-bo-port 30005 --dashboard-port 8090"
+```
+
+```sh
+sudo systemctl restart rustadsb
+```
+
+Then open `http://<the Pi's address>:8090/`. The page shows:
+
+- **Now:** messages per second, aircraft (and how many have a position), the furthest aircraft, positions
+  decoded, signal and noise, strong signals (too many means the gain is too high), dropped samples (should be 0),
+  and the decoder's own CPU and memory use.
+- **The last 24 hours:** graphs of the message rate, aircraft, range, and signal and noise, one point a minute.
+- **Connections:** everything connected to the decoder's ports right now (feed clients, MLAT results, tar1090,
+  viewers) and for how long, and the connections it makes itself (`--net-connector`).
+
+Signal, noise, strong signals and dropped samples appear only when there is a local receiver; a `--net-only`
+process (a feed client) can have a dashboard too, without them.
+
+How it works: the decoder adds one point a minute to an in-memory history of 24 hours (1440 points, tens of kB).
+The history starts again when the decoder restarts. The page is drawn only when someone opens it: HTML with SVG
+graphs, no JavaScript, nothing loaded from the internet, and it reloads itself every 10 s. It is read-only:
+it answers `GET` for `/` and nothing else changes anything. It listens on `--net-bind-address` like the other
+ports, so `--net-bind-address 127.0.0.1` keeps it to the Pi itself; there is no password, so do not expose the
+port to the internet.
 
 ## Architecture
 

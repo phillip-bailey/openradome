@@ -620,6 +620,11 @@ impl StatsRecorder {
         true
     }
 
+    /// The bucket closed most recently.
+    pub fn last(&self) -> Option<&StatsBlock> {
+        self.buckets.back()
+    }
+
     /// Number of closed 10 s buckets.
     pub fn len(&self) -> usize {
         self.buckets.len()

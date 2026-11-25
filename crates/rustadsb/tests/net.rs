@@ -201,3 +201,53 @@ fn bad_connector_is_an_error() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("unsupported net-connector protocol"));
 }
+
+/// `GET` a page from `port` and return the whole reply.
+fn http_get(port: u16, path: &str) -> String {
+    let mut s = connect(port);
+    write!(s, "GET {path} HTTP/1.1\r\nHost: test\r\n\r\n").unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).expect("read reply");
+    out
+}
+
+#[test]
+fn dashboard_shows_the_open_connections() {
+    let _serial = serial();
+    let [bo, dash] = free_ports();
+    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+        .args([
+            "--net-bind-address",
+            "127.0.0.1",
+            "--net-bo-port",
+            &bo.to_string(),
+            "--net-heartbeat",
+            "0",
+            "--quiet",
+            "--dashboard-port",
+            &dash.to_string(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("spawn");
+    let _server = Server(child);
+    let _client = connect(bo);
+    // the connection is registered by the accepting task, a moment after connect returns
+    let end = Instant::now() + Duration::from_secs(5);
+    let page = loop {
+        let page = http_get(dash, "/");
+        if page.contains("Connected to this decoder (1)") || Instant::now() > end {
+            break page;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(page.starts_with("HTTP/1.1 200 OK\r\n"), "{page}");
+    assert!(page.contains("Connected to this decoder (1)"), "{page}");
+    assert!(page.contains(&format!("beast out :{bo}")), "{page}");
+    assert!(
+        !page.contains("Signal and noise"),
+        "no local receiver, so no signal graph"
+    );
+    assert!(http_get(dash, "/nothing").starts_with("HTTP/1.1 404"));
+}

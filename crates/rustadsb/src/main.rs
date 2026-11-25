@@ -1,5 +1,6 @@
 mod apiserver;
 mod cli;
+mod dashboard;
 mod engine;
 mod globefiles;
 mod interactive;
@@ -186,6 +187,25 @@ fn run(cli: &Cli) -> Result<(), String> {
                 jsonout::VERSION_STRING,
             )
             .map_err(|e| format!("can't listen for the API on port {port}: {e}"))?,
+        );
+    }
+    if cli.write_json.is_some() || cli.dashboard_port.is_some() {
+        engine.recorder = Some(rustadsb_core::json::StatsRecorder::new(startup));
+    }
+    if let Some(port) = cli.dashboard_port {
+        let bind = cli
+            .net_bind_address
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        engine.dashboard = Some(
+            dashboard::Dashboard::start(
+                runtime.handle(),
+                bind,
+                port,
+                startup,
+                !net_only,
+                jsonout::VERSION_STRING,
+            )
+            .map_err(|e| format!("can't listen for the dashboard on port {port}: {e}"))?,
         );
     }
     if let Some(dir) = &cli.write_json {

@@ -145,6 +145,10 @@ pub struct Cli {
     /// Tell tar1090 (in receiver.json) to use the API: needs /tar1090/re-api proxied to --net-api-port
     #[arg(long, help_heading = "Network options")]
     pub tar1090_use_api: bool,
+    /// Serve a status web page on this port: live figures, 24 h graphs and the open connections
+    /// (rustadsb only; off unless given; listens on --net-bind-address)
+    #[arg(long, value_name = "port", help_heading = "Network options")]
+    pub dashboard_port: Option<u16>,
     /// Write specially indexed globe_xxxx.binCraft files and traces (for tar1090)
     #[arg(long, help_heading = "General options")]
     pub write_json_globe_index: bool,

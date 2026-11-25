@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::sync::mpsc::Receiver;
 
 use rustadsb_core::beast::message_from_wire;
+use rustadsb_core::json::StatsRecorder;
 use rustadsb_core::mode_s::{DFTYPE_MODEAC, DataSource, ModesMessage};
 use rustadsb_core::output::{beast_frame, raw_line};
 use rustadsb_core::pipeline::IqPipeline;
@@ -13,6 +14,7 @@ use rustadsb_core::track::Tracker;
 
 use crate::apiserver::Api;
 use crate::cli::Cli;
+use crate::dashboard::Dashboard;
 use crate::interactive::Interactive;
 use crate::jsonout::{COMMAND_FILE, JsonWriter};
 use crate::net::{Hub, WireItem, now_ms};
@@ -40,6 +42,10 @@ pub struct Engine<'a> {
     pub interactive: Option<Interactive>,
     /// `--write-state`: the range outline, kept across restarts.
     pub state: Option<StateWriter>,
+    /// `--dashboard-port`: the status web page.
+    pub dashboard: Option<Dashboard>,
+    /// The 10 s statistics buckets behind `stats.json` and the dashboard (when either is on).
+    pub recorder: Option<StatsRecorder>,
     pub net_rx: Option<Receiver<WireItem>>,
     pub remote: RemoteStats,
     out: io::BufWriter<io::Stdout>,
@@ -66,6 +72,8 @@ impl<'a> Engine<'a> {
             interactive: None,
             api: None,
             state: None,
+            dashboard: None,
+            recorder: None,
             net_rx: None,
             remote: RemoteStats::default(),
             out: io::BufWriter::new(io::stdout()),
@@ -285,9 +293,33 @@ impl<'a> Engine<'a> {
         if let Some(cmd) = self.json.as_mut().and_then(|w| w.take_command(now)) {
             self.run_command(&cmd);
         }
-        if let Some(w) = self.json.as_mut() {
-            w.tick(now, &mut self.tracker, &mut self.pipe)
+        let mut closed = false;
+        if let Some(r) = self.recorder.as_mut() {
+            let (processed, lost, dropped) = (
+                self.pipe.samples(),
+                self.pipe.samples_lost(),
+                self.pipe.samples_dropped(),
+            );
+            closed = r.update(
+                now,
+                &mut self.pipe.demod.stats,
+                &mut self.tracker.stats,
+                processed,
+                lost,
+                dropped,
+            );
+        }
+        if let (Some(w), Some(r)) = (self.json.as_mut(), self.recorder.as_ref()) {
+            w.tick(now, &mut self.tracker, &self.pipe, r, closed)
                 .map_err(|e| format!("json: {e}"))?;
+        }
+        if let Some(d) = self.dashboard.as_mut() {
+            let bucket = if closed {
+                self.recorder.as_ref().and_then(|r| r.last())
+            } else {
+                None
+            };
+            d.tick(now, &self.tracker, bucket);
         }
         if let (Some(s), Some(o)) = (self.state.as_mut(), self.tracker.outline.as_ref()) {
             s.tick(now, o);
@@ -326,8 +358,8 @@ impl<'a> Engine<'a> {
     }
 
     pub fn finish(&mut self, now: i64) -> Result<(), String> {
-        if let Some(w) = self.json.as_mut() {
-            w.finish(now, &mut self.tracker, &self.pipe)
+        if let (Some(w), Some(r)) = (self.json.as_mut(), self.recorder.as_ref()) {
+            w.finish(now, &mut self.tracker, &self.pipe, r)
                 .map_err(|e| format!("json: {e}"))?;
         }
         if let (Some(s), Some(o)) = (self.state.as_ref(), self.tracker.outline.as_ref()) {

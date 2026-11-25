@@ -43,7 +43,6 @@ pub struct JsonWriter {
     dir: PathBuf,
     interval_ms: i64,
     next_aircraft: i64,
-    recorder: StatsRecorder,
     nfix: u8,
     /// There is a local SDR or IQ file: `stats.json` gets the receiver block and the gain.
     with_local: bool,
@@ -181,7 +180,6 @@ impl JsonWriter {
             dir: dir.to_path_buf(),
             interval_ms,
             next_aircraft: now,
-            recorder: StatsRecorder::new(now),
             nfix,
             with_local,
             gain_db,
@@ -191,25 +189,18 @@ impl JsonWriter {
         })
     }
 
-    /// Call as time advances; writes what is due.
+    /// Call as time advances; writes what is due. `stats_closed`: the recorder has just closed a
+    /// 10 s bucket, so `stats.json` is due.
     pub fn tick(
         &mut self,
         now: i64,
         tracker: &mut Tracker,
-        pipe: &mut IqPipeline,
+        pipe: &IqPipeline,
+        recorder: &StatsRecorder,
+        stats_closed: bool,
     ) -> io::Result<()> {
-        let (processed, lost, dropped) =
-            (pipe.samples(), pipe.samples_lost(), pipe.samples_dropped());
-        let closed = self.recorder.update(
-            now,
-            &mut pipe.demod.stats,
-            &mut tracker.stats,
-            processed,
-            lost,
-            dropped,
-        );
-        if closed {
-            self.write_stats(now, tracker, pipe)?;
+        if stats_closed {
+            self.write_stats(now, tracker, pipe, recorder)?;
         }
         if due(now, self.next_aircraft, self.interval_ms) {
             self.next_aircraft = now + self.interval_ms;
@@ -256,12 +247,18 @@ impl JsonWriter {
     }
 
     /// Final write at exit.
-    pub fn finish(&mut self, now: i64, tracker: &mut Tracker, pipe: &IqPipeline) -> io::Result<()> {
+    pub fn finish(
+        &mut self,
+        now: i64,
+        tracker: &mut Tracker,
+        pipe: &IqPipeline,
+        recorder: &StatsRecorder,
+    ) -> io::Result<()> {
         self.write_aircraft(now, tracker, true)?;
         if let Some(o) = &tracker.outline {
             write_atomic(&self.dir, "outline.json", json::outline_json(o))?;
         }
-        self.write_stats(now, tracker, pipe)
+        self.write_stats(now, tracker, pipe, recorder)
     }
 
     /// `aircraft.json` (and `.gz`) and `aircraft.binCraft` (`.zst` always, `.gz` on request).
@@ -295,7 +292,13 @@ impl JsonWriter {
         Ok(())
     }
 
-    fn write_stats(&self, now: i64, tracker: &Tracker, pipe: &IqPipeline) -> io::Result<()> {
+    fn write_stats(
+        &self,
+        now: i64,
+        tracker: &Tracker,
+        pipe: &IqPipeline,
+        recorder: &StatsRecorder,
+    ) -> io::Result<()> {
         let cum = Cumulative {
             demod: &pipe.demod.stats,
             track: &tracker.stats,
@@ -305,7 +308,7 @@ impl JsonWriter {
             counts: tracker.counts(now),
             gain_db: self.gain_db,
         };
-        let s = json::stats_json(&self.recorder, now, &cum, self.nfix, self.with_local);
+        let s = json::stats_json(recorder, now, &cum, self.nfix, self.with_local);
         write_atomic(&self.dir, "stats.json", &s)
     }
 }

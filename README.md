@@ -312,24 +312,64 @@ the dongle and keeps the DVB-T TV driver off it, then writes `/etc/default/rusta
 - `--json-dir /run/<name>` changes where the JSON goes; `--bind 127.0.0.1` keeps the ports local.
 - `sudo ./install.sh --uninstall` removes it (`--purge` also the options file and user).
 
-macOS and Windows: download the archive from the release page and run `rustadsb` directly.
+macOS and Windows: download the archive from the release page (see below), unpack it and run `rustadsb`
+directly.
+
+### Which file to download
+
+Each release has one archive per platform, named `rustadsb-<version>-<platform>`. On Linux, `install.sh` picks the
+right one for you; to download one yourself:
+
+| Your device | Download |
+|---|---|
+| Raspberry Pi 5, 4, 3 or Zero 2 W on **64-bit** Raspberry Pi OS | `rustadsb-<version>-linux-arm64.tar.gz` |
+| Raspberry Pi 5, 4, 3, 2 or Zero 2 W on **32-bit** Raspberry Pi OS | `rustadsb-<version>-linux-armv7.tar.gz` |
+| Raspberry Pi 1, Zero or Zero W | `rustadsb-<version>-linux-armv6.tar.gz` |
+| Other 64-bit ARM Linux boards (Orange Pi, Rock Pi, Odroid, ARM servers) | `rustadsb-<version>-linux-arm64.tar.gz` |
+| Linux PC, server, mini PC or VM (Intel or AMD) | `rustadsb-<version>-linux-x86_64.tar.gz` |
+| Mac with Apple silicon (M1 or later) | `rustadsb-<version>-macos-arm64.tar.gz` |
+| Mac with an Intel processor | `rustadsb-<version>-macos-x86_64.tar.gz` |
+| Windows PC (Intel or AMD) | `rustadsb-<version>-windows-x86_64.zip` |
+| Windows on ARM (Snapdragon laptops, Surface Pro X) | `rustadsb-<version>-windows-arm64.zip` |
+
+Not sure which Linux build? Run `uname -m` and `getconf LONG_BIT`:
+
+| `uname -m` | `getconf LONG_BIT` | Download |
+|---|---|---|
+| `aarch64` | `64` | `linux-arm64` |
+| `aarch64` | `32` | `linux-armv7` (64-bit kernel, 32-bit system) |
+| `armv7l` | `32` | `linux-armv7` |
+| `armv6l` | `32` | `linux-armv6` |
+| `x86_64` | `64` | `linux-x86_64` |
+
+On a Mac, Apple menu > About This Mac shows "Chip: Apple M…" (Apple silicon) or "Processor: Intel". On
+Windows, Settings > System > About shows "x64-based processor" or "ARM-based processor".
+
+Linux builds need glibc 2.31 or newer: Raspberry Pi OS Bullseye (11) or later, Debian 11, Ubuntu 20.04 or
+later. Check a download against the release's `SHA256SUMS` with `sha256sum -c --ignore-missing SHA256SUMS`
+(Linux) or `shasum -a 256 -c --ignore-missing SHA256SUMS` (macOS).
 
 ## Releases
 
-On GitHub, `.github/workflows/build.yml` tests on Linux and macOS, builds all eight archives below (macOS on a
+On GitHub, `.github/workflows/build.yml` tests on Linux and macOS, builds all eight archives (macOS on a
 macOS runner) and, for a tag `vX.Y.Z`, publishes them as a release with `SHA256SUMS`.
 
 On Gitea, every tag `vX.Y.Z` builds and publishes a release (`.gitea/workflows/build.yml`): tests first,
 then one archive per target, plus `SHA256SUMS`.
 
-| Platform | Archive target |
+| Archive | Rust target it is built for |
 |---|---|
-| Linux x86_64 | `x86_64-unknown-linux-gnu` |
-| Raspberry Pi 3/4/5 and other 64-bit ARM Linux | `aarch64-unknown-linux-gnu` |
-| Raspberry Pi 2/3/4 on 32-bit Raspberry Pi OS | `armv7-unknown-linux-gnueabihf` |
-| Raspberry Pi Zero / 1 | `arm-unknown-linux-gnueabihf` |
-| Windows x86_64 / ARM64 | `x86_64-pc-windows-gnu` / `aarch64-pc-windows-gnullvm` |
-| macOS Apple silicon / Intel | `aarch64-apple-darwin` / `x86_64-apple-darwin` |
+| `linux-x86_64` | `x86_64-unknown-linux-gnu` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` |
+| `linux-armv7` | `armv7-unknown-linux-gnueabihf` |
+| `linux-armv6` | `arm-unknown-linux-gnueabihf` |
+| `windows-x86_64` | `x86_64-pc-windows-gnu` |
+| `windows-arm64` | `aarch64-pc-windows-gnullvm` |
+| `macos-arm64` | `aarch64-apple-darwin` |
+| `macos-x86_64` | `x86_64-apple-darwin` |
+
+Releases up to v0.2.0 on Gitea name the archives after the Rust target instead (`rustadsb-v0.2.0-armv7-unknown-linux-gnueabihf.tar.gz`);
+`install.sh` tries the plain name first and falls back to that.
 
 Linux binaries need glibc 2.31 or newer. CI cannot build macOS (it needs Apple's SDK): after the tag's run finishes,
 run `make release-mac TAG=vX.Y.Z` on a Mac to add the two macOS archives and regenerate `SHA256SUMS`.

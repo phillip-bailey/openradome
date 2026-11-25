@@ -3,12 +3,12 @@
 #
 #   curl -fsSL <repo>/raw/branch/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
-#   sudo ./install.sh --archive rustadsb-v0.2.0-armv7-unknown-linux-gnueabihf.tar.gz --lat ... --lon ...
+#   sudo ./install.sh --archive rustadsb-v0.2.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
 #   sudo ./install.sh --uninstall [--purge]
 #
 # What it does, on Debian, Raspberry Pi OS, Ubuntu or any Linux with systemd:
-#   * picks the build for this CPU (x86_64, aarch64, armv7, armv6), downloads it and its SHA256SUMS from
+#   * picks the build for this CPU (x86_64, arm64, armv7, armv6), downloads it and its SHA256SUMS from
 #     the release page and refuses to install if the checksum does not match;
 #   * installs /usr/local/bin/rustadsb (the previous one is kept as rustadsb.prev);
 #   * creates the system user rustadsb, in plugdev, and a udev rule that gives plugdev the RTL-SDR dongle;
@@ -128,16 +128,18 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 # --- which build -------------------------------------------------------------------------------
+# PLAT is the archive name (rustadsb-vX.Y.Z-linux-armv7.tar.gz); TRIPLE the Rust target name that
+# older releases used instead (rustadsb-v0.1.0-armv7-unknown-linux-gnueabihf.tar.gz), tried second
 case "$(uname -m)" in
-  x86_64|amd64) TRIPLE=x86_64-unknown-linux-gnu ;;
-  aarch64|arm64) TRIPLE=aarch64-unknown-linux-gnu ;;
-  armv7l|armv8l) TRIPLE=armv7-unknown-linux-gnueabihf ;;
-  armv6l) TRIPLE=arm-unknown-linux-gnueabihf ;;
+  x86_64|amd64) PLAT=linux-x86_64; TRIPLE=x86_64-unknown-linux-gnu ;;
+  aarch64|arm64) PLAT=linux-arm64; TRIPLE=aarch64-unknown-linux-gnu ;;
+  armv7l|armv8l) PLAT=linux-armv7; TRIPLE=armv7-unknown-linux-gnueabihf ;;
+  armv6l) PLAT=linux-armv6; TRIPLE=arm-unknown-linux-gnueabihf ;;
   *) die "no prebuilt binary for $(uname -m); build from source (see the README)" ;;
 esac
 # a 32-bit userland on a 64-bit Pi kernel reports aarch64 but needs the armv7 build
-if [ "$TRIPLE" = aarch64-unknown-linux-gnu ] && [ "$(getconf LONG_BIT)" = 32 ]; then
-  TRIPLE=armv7-unknown-linux-gnueabihf
+if [ "$PLAT" = linux-arm64 ] && [ "$(getconf LONG_BIT)" = 32 ]; then
+  PLAT=linux-armv7; TRIPLE=armv7-unknown-linux-gnueabihf
 fi
 GLIBC=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$' || true)
 if [ -n "$GLIBC" ] && [ "$(printf '%s\n2.31\n' "$GLIBC" | sort -V | head -1)" != 2.31 ]; then
@@ -172,10 +174,14 @@ else
     VERSION=$(grep -oE '"tag_name": *"[^"]+"' "$TMP/latest.json" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
     [ -n "$VERSION" ] || die "no release found at $REPO_URL"
   fi
-  NAME="rustadsb-$VERSION-$TRIPLE.tar.gz"
   BASE="$REPO_URL/releases/download/$VERSION"
+  NAME="rustadsb-$VERSION-$PLAT.tar.gz"
   say "downloading $NAME"
-  fetch "$BASE/$NAME" "$TMP/$NAME" || die "download failed: $BASE/$NAME"
+  if ! fetch "$BASE/$NAME" "$TMP/$NAME" 2>/dev/null; then
+    NAME="rustadsb-$VERSION-$TRIPLE.tar.gz" # older releases
+    say "not found; trying the older name $NAME"
+    fetch "$BASE/$NAME" "$TMP/$NAME" || die "download failed: $BASE/rustadsb-$VERSION-$PLAT.tar.gz"
+  fi
   fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" || die "download failed: $BASE/SHA256SUMS"
 fi
 
@@ -186,7 +192,7 @@ fi
 tar -xzf "$TMP/$NAME" -C "$TMP"
 NEW=$(find "$TMP" -type f -name rustadsb | head -1)
 [ -n "$NEW" ] || die "no rustadsb binary in $NAME"
-"$NEW" --help >/dev/null 2>&1 || die "the downloaded binary does not run on this system ($TRIPLE)"
+"$NEW" --help >/dev/null 2>&1 || die "the downloaded binary does not run on this system ($PLAT)"
 
 # --- another decoder holding the dongle? ----------------------------------------------------------
 OTHERS=""

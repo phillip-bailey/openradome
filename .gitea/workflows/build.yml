@@ -52,12 +52,12 @@ jobs:
           case "$GITHUB_REF" in refs/tags/*) ;; *) VERSION="dev-$(git rev-parse --short HEAD)" ;; esac
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p dist
-          # triple|zig suffix
-          while IFS='|' read -r triple suffix; do
+          # Rust target|zig suffix|plain name used in the archive (rustadsb-vX.Y.Z-<name>)
+          while IFS='|' read -r triple suffix plat; do
             [ -n "$triple" ] || continue
             rustup target add "$triple"
             cargo zigbuild --release --locked --target "${triple}${suffix}"
-            name="rustadsb-${VERSION}-${triple}"
+            name="rustadsb-${VERSION}-${plat}"
             stage="dist/${name}"
             mkdir -p "$stage"
             case "$triple" in
@@ -72,14 +72,14 @@ jobs:
             esac
             rm -rf "$stage"
           done <<EOF
-          x86_64-unknown-linux-gnu|.${GLIBC}
-          aarch64-unknown-linux-gnu|.${GLIBC}
-          armv7-unknown-linux-gnueabihf|.${GLIBC}
-          arm-unknown-linux-gnueabihf|.${GLIBC}
-          x86_64-pc-windows-gnu|
-          aarch64-pc-windows-gnullvm|
+          x86_64-unknown-linux-gnu|.${GLIBC}|linux-x86_64
+          aarch64-unknown-linux-gnu|.${GLIBC}|linux-arm64
+          armv7-unknown-linux-gnueabihf|.${GLIBC}|linux-armv7
+          arm-unknown-linux-gnueabihf|.${GLIBC}|linux-armv6
+          x86_64-pc-windows-gnu||windows-x86_64
+          aarch64-pc-windows-gnullvm||windows-arm64
           EOF
-          (cd dist && sha256sum * > SHA256SUMS)
+          (cd dist && sha256sum -- * > SHA256SUMS)
           ls -l dist; cat dist/SHA256SUMS
 
       - name: Publish release
@@ -95,7 +95,7 @@ jobs:
           [ -z "$old" ] || curl -fsS -X DELETE -H "$auth" "$api/releases/$old"
           pre=false; case "$GITHUB_REF_NAME" in *-*) pre=true ;; esac
           id=$(curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' "$api/releases" \
-                 -d "{\"tag_name\":\"${GITHUB_REF_NAME}\",\"name\":\"${GITHUB_REF_NAME}\",\"prerelease\":${pre},\"body\":\"Linux (x86_64, aarch64, armv7, armv6) and Windows (x86_64, arm64) built by CI. macOS is added by make release-mac. Verify downloads against SHA256SUMS.\"}" \
+                 -d "{\"tag_name\":\"${GITHUB_REF_NAME}\",\"name\":\"${GITHUB_REF_NAME}\",\"prerelease\":${pre},\"body\":\"Linux (x86_64, arm64, armv7, armv6) and Windows (x86_64, arm64) built by CI. macOS is added by make release-mac. Verify downloads against SHA256SUMS.\"}" \
                | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
           [ -n "$id" ] || { echo "could not create release" >&2; exit 1; }
           for f in dist/*; do

@@ -27,10 +27,11 @@ src=$(mktemp -d); trap 'rm -rf "$src"' EXIT
 git archive "$TAG" | tar -x -C "$src"
 out=$(mktemp -d); trap 'rm -rf "$src" "$out"' EXIT
 
-for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+for pair in aarch64-apple-darwin:macos-arm64 x86_64-apple-darwin:macos-x86_64; do
+  triple=${pair%%:*}
   rustup target add "$triple" >/dev/null
   (cd "$src" && cargo build --release --locked --target "$triple")
-  name=rustadsb-$TAG-$triple
+  name=rustadsb-$TAG-${pair#*:}
   mkdir "$out/$name"
   cp "$src/target/$triple/release/rustadsb" "$src/README.md" "$src/COPYING" "$src/NOTICE" "$out/$name/"
   tar -C "$out" -czf "$out/$name.tar.gz" "$name"
@@ -41,7 +42,7 @@ done
 assets=$(curl -fsS -H "$auth" "$API/releases/$ID/assets")
 for a in $(printf '%s' "$assets" | python3 -c 'import json,sys
 for a in json.load(sys.stdin):
-    if "apple-darwin" in a["name"] or a["name"]=="SHA256SUMS": print(a["id"])'); do
+    if "-macos-" in a["name"] or "apple-darwin" in a["name"] or a["name"]=="SHA256SUMS": print(a["id"])'); do
   curl -fsS -X DELETE -H "$auth" "$API/releases/$ID/assets/$a"
 done
 for f in "$out"/*.tar.gz; do

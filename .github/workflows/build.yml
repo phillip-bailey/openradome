@@ -46,20 +46,21 @@ jobs:
         run: make test
 
   build:
-    name: build (${{ matrix.target }})
+    name: build (${{ matrix.name }})
     needs: test
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu,      os: ubuntu-latest, zig: true }
-          - { target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, zig: true }
-          - { target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, zig: true }
-          - { target: arm-unknown-linux-gnueabihf,   os: ubuntu-latest, zig: true }
-          - { target: x86_64-pc-windows-gnu,         os: ubuntu-latest, zig: true }
-          - { target: aarch64-pc-windows-gnullvm,    os: ubuntu-latest, zig: true }
-          - { target: aarch64-apple-darwin,          os: macos-latest,  zig: false }
-          - { target: x86_64-apple-darwin,           os: macos-latest,  zig: false }
+          # name: the plain platform name in the archive (rustadsb-vX.Y.Z-<name>); target: the Rust target it is built for
+          - { name: linux-x86_64,   target: x86_64-unknown-linux-gnu,      os: ubuntu-latest, zig: true }
+          - { name: linux-arm64,    target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, zig: true }
+          - { name: linux-armv7,    target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, zig: true }
+          - { name: linux-armv6,    target: arm-unknown-linux-gnueabihf,   os: ubuntu-latest, zig: true }
+          - { name: windows-x86_64, target: x86_64-pc-windows-gnu,         os: ubuntu-latest, zig: true }
+          - { name: windows-arm64,  target: aarch64-pc-windows-gnullvm,    os: ubuntu-latest, zig: true }
+          - { name: macos-arm64,    target: aarch64-apple-darwin,          os: macos-latest,  zig: false }
+          - { name: macos-x86_64,   target: x86_64-apple-darwin,           os: macos-latest,  zig: false }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -107,7 +108,7 @@ jobs:
         run: |
           set -eu
           case "$GITHUB_REF" in refs/tags/*) version="$GITHUB_REF_NAME" ;; *) version="dev-${GITHUB_SHA::7}" ;; esac
-          name="rustadsb-${version}-${{ matrix.target }}"
+          name="rustadsb-${version}-${{ matrix.name }}"
           mkdir -p "dist/$name"
           case "${{ matrix.target }}" in *windows*) bin=rustadsb.exe ;; *) bin=rustadsb ;; esac
           cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE "dist/$name/"
@@ -121,7 +122,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: rustadsb-${{ matrix.target }}
+          name: rustadsb-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
@@ -150,7 +151,7 @@ jobs:
           set -eu
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
-          notes="Linux (x86_64, aarch64, armv7, armv6), Windows (x86_64, ARM64) and macOS (Apple silicon, Intel) builds. Check downloads against SHA256SUMS. Install on Linux with install.sh (see the README)."
+          notes="Linux (x86_64, arm64, armv7, armv6), Windows (x86_64, arm64) and macOS (Apple silicon, Intel) builds. Which file fits your device: see \"Which file to download\" in the README. Check downloads against SHA256SUMS. On Linux, install.sh picks and installs the right one."
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # made already (by hand, or a re-run): attach the files and set the pre-release flag the tag implies
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"

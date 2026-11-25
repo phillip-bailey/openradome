@@ -152,7 +152,9 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
           notes="Linux (x86_64, aarch64, armv7, armv6), Windows (x86_64, ARM64) and macOS (Apple silicon, Intel) builds. Check downloads against SHA256SUMS. Install on Linux with install.sh (see the README)."
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # made already (by hand, or a re-run): attach the files and set the pre-release flag the tag implies
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --prerelease="$([ -n "$pre" ] && echo true || echo false)"
           else
             gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "$notes" $pre
           fi

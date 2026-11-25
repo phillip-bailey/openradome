@@ -1,5 +1,38 @@
 # rustadsb
 
+## Executive summary
+
+**ADS-B** (Automatic Dependent Surveillance–Broadcast) is how aircraft tell the world where they are. An equipped
+aircraft works out its own position by satellite navigation (GPS) and broadcasts it by radio on 1090 MHz, about
+twice a second, together with its identity, callsign, altitude, speed and heading. Nothing has to ask for it: the
+report is *automatic*, it *depends* on the aircraft's own navigation rather than on a radar measuring it, and it is
+*broadcast* to anyone listening.
+
+**Why it is used**
+
+- **Air traffic control sees more, more precisely.** A radar sweeps every 4 to 12 seconds and grows less accurate
+  with distance; ADS-B gives a GPS-accurate position twice a second. A receiving station costs a small fraction of a
+  radar, so coverage reaches places radar does not: remote regions, mountains, and (through satellite receivers)
+  the oceans.
+- **Aircraft see each other.** Other aircraft receive the same broadcasts, so pilots and on-board traffic displays
+  know what is nearby, not only what the ground tells them.
+- **It is required.** Since 2020, most aircraft in United States controlled airspace and larger aircraft in Europe
+  must broadcast ADS-B, and many other countries have similar rules. Nearly every airliner transmits it.
+- **Anyone can receive it.** The signal is not encrypted. A USB radio costing about 20 € and an antenna on a
+  Raspberry Pi pick up aircraft 200 to 400 km away. Tens of thousands of volunteer stations built this way feed
+  flight-tracking services (Flightradar24, FlightAware, ADS-B Exchange, adsb.lol, adsb.fi, airplanes.live and
+  others), whose maps are used by the public, journalists, researchers studying emissions and noise, airports and
+  accident investigators.
+
+**What rustadsb is.** The software at the heart of such a receiving station. It turns the raw radio signal from
+the USB radio into a live list of aircraft with their positions, feeds the station's own map, and forwards the
+data to the flight-tracking networks. It is a memory-safe rewrite, in Rust, of readsb, the decoder most stations
+run today. It takes the same options and produces the same outputs, so it can replace readsb without changing the
+rest of a station. It runs in service on a Raspberry Pi feeding 19 networks, and its output is checked against
+readsb's on recorded and live data.
+
+## Overview
+
 An ADS-B and Mode S decoder and aggregator feed client written in Rust: a from-scratch reimplementation of
 [wiedehopf/readsb](https://github.com/wiedehopf/readsb) (v3.16.x).
 
@@ -54,7 +87,8 @@ decoder attached to the dongle, and the small per-network feed clients that forw
   ([rtlsdr-nusb](https://crates.io/crates/rtlsdr-nusb)): no librtlsdr, no libusb. Cross-compile one binary, copy it.
 - **Observable and self-healing.** A silent-dongle watchdog, bounded shutdown on a wedged USB device, and counted,
   logged losses (dropped USB blocks, slow output clients, full input queues) instead of silent ones.
-- **Pinned by tests.** Golden tests decode synthetic and real recorded RF and must match upstream byte for byte.
+- **Pinned by tests.** Golden tests decode synthetic RF captures and must match upstream byte for byte; real recordings were checked
+  the same way (see [Verification](#verification-against-upstream)).
 
 ## Features
 

@@ -28,8 +28,8 @@ report is *automatic*, it *depends* on the aircraft's own navigation rather than
 the USB radio into a live list of aircraft with their positions, feeds the station's own map, and forwards the
 data to the flight-tracking networks. It is a memory-safe rewrite, in Rust, of readsb, the decoder most stations
 run today. It takes the same options and produces the same outputs, so it can replace readsb without changing the
-rest of a station. It runs in service on a Raspberry Pi feeding 19 networks, and its output is checked against
-readsb's on recorded and live data.
+rest of a station. It runs in service on a Raspberry Pi, and its output is checked against readsb's on recorded
+and live data.
 
 ## Overview
 
@@ -44,7 +44,7 @@ layouts follow upstream, so it drops into an existing setup unchanged.
 It is not a fork: no shared history, its own crate layout and design. Upstream is the reference for behaviour
 and output, and the decoder logic is ported from its GPLv3 code, hence the licence (see [Licence](#licence)).
 
-**Status:** in service on a Raspberry Pi 2 as the decoder and as all 19 network feed clients. On recorded and live
+**Status:** in service on a Raspberry Pi 2 as the decoder and as the network feed clients. On recorded and live
 data it produces the same output as upstream (see [Verification](#verification-against-upstream)). It implements
 the parts of upstream a feeder station uses, not the whole of it (see [Not implemented](#not-implemented)).
 

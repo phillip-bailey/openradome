@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenRadome — an open-source ADS-B receiver</title>
+<meta name="description" content="OpenRadome: an open-source ADS-B receiver for the Raspberry Pi. A drop-in readsb replacement in memory-safe Rust, verified byte for byte, with a built-in status dashboard and an MCP server for AI assistants.">
+<meta property="og:title" content="OpenRadome — an open-source ADS-B receiver">
+<meta property="og:description" content="A drop-in readsb replacement in memory-safe Rust, with a status dashboard and an AI assistant interface built in.">
+<meta property="og:image" content="img/dashboard.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M3 22a13 13 0 0 1 26 0z' fill='%230f766e'/%3E%3Ccircle cx='16' cy='22' r='2.5' fill='%23fff'/%3E%3Crect x='2' y='23' width='28' height='3' rx='1.5' fill='%230f766e'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f8fafb; --card: #ffffff; --ink: #14181c; --muted: #5b6670; --line: #e2e7eb;
+  --accent: #0f766e; --accent-ink: #ffffff; --accent-soft: #e6f4f2; --code: #0f1a1c; --code-ink: #d8f3ee;
+  --warn: #b45309;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1214; --card: #151c1f; --ink: #e8eef0; --muted: #9aa8ae; --line: #253035;
+    --accent: #2dd4bf; --accent-ink: #062b27; --accent-soft: #10302c; --code: #091012; --code-ink: #c8f5ec;
+    --warn: #f59e0b;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1214; --card: #151c1f; --ink: #e8eef0; --muted: #9aa8ae; --line: #253035;
+  --accent: #2dd4bf; --accent-ink: #062b27; --accent-soft: #10302c; --code: #091012; --code-ink: #c8f5ec;
+  --warn: #f59e0b;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+nav { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 58px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 750; font-size: 19px; color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+.brand svg { width: 28px; height: 28px; }
+nav .links { display: flex; gap: 20px; margin-left: auto; font-size: 15px; }
+nav .links a { color: var(--muted); text-decoration: none; }
+nav .links a:hover { color: var(--ink); }
+@media (max-width: 720px) { nav .links a:not(.gh) { display: none; } }
+
+header.hero { padding: 72px 0 56px; }
+.hero .wrap { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 40px; align-items: center; }
+@media (max-width: 860px) { .hero .wrap { grid-template-columns: 1fr; } .scope { width: 100%; max-width: 300px; margin: 0 auto; } }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 99px; }
+h1 { font-size: clamp(38px, 6vw, 58px); line-height: 1.05; letter-spacing: -0.03em; margin: 16px 0 18px; }
+.lead { font-size: 20px; color: var(--muted); margin: 0 0 28px; max-width: 34em; }
+.hero .wrap > *, .two > *, .grid > * { min-width: 0; }   /* long code lines scroll instead of widening the page */
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 26px; }
+.btn { display: inline-block; padding: 11px 20px; border-radius: 10px; font-weight: 650; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: var(--card); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+pre { background: var(--code); color: var(--code-ink); padding: 14px 16px; border-radius: 10px; overflow-x: auto; font-size: 14px; line-height: 1.55; margin: 0; }
+p code, li code, td code { background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; font-size: 0.88em; }
+
+.scope { position: relative; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, var(--accent-soft) 0%, var(--card) 70%); border: 1px solid var(--line); overflow: hidden; }
+.scope svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sweep { transform-origin: 50% 50%; animation: sweep 6s linear infinite; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sweep { animation: none; } }
+
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+h2 { font-size: clamp(28px, 4vw, 36px); letter-spacing: -0.02em; margin: 0 0 10px; }
+.sub { color: var(--muted); margin: 0 0 30px; max-width: 46em; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+.icon { width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 12px; font-weight: 800; }
+
+figure { margin: 0; }
+.shot { border-radius: 14px; border: 1px solid var(--line); overflow: hidden; box-shadow: 0 20px 50px -25px rgba(0,0,0,0.45); }
+.shot img { display: block; width: 100%; height: auto; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 10px; }
+
+.chat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; display: grid; gap: 14px; }
+.msg { padding: 12px 15px; border-radius: 12px; font-size: 15.5px; max-width: 46em; }
+.msg.you { background: var(--accent); color: var(--accent-ink); justify-self: end; }
+.msg.ai { background: var(--accent-soft); }
+.msg.ai ul { margin: 6px 0 0; padding-left: 20px; }
+.tool { font-size: 13px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+.qs { margin: 0; padding-left: 20px; color: var(--muted); }
+.qs li { margin: 6px 0; }
+.qs b { color: var(--ink); font-weight: 600; }
+
+.table { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 13.5px; }
+tr:last-child td { border-bottom: 0; }
+.ok { color: var(--accent); font-weight: 650; }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+.steps li { counter-increment: s; position: relative; padding-left: 44px; }
+.steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 750; font-size: 14px; }
+footer { border-top: 1px solid var(--line); padding: 34px 0 50px; color: var(--muted); font-size: 14.5px; }
+footer .wrap { display: grid; gap: 8px; }
+</style>
+</head>
+<body>
+
+<nav aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 22a13 13 0 0 1 26 0z" fill="currentColor" opacity=".18"/><path d="M3 22a13 13 0 0 1 26 0" fill="none" stroke="#0f766e" stroke-width="2.2"/><circle cx="16" cy="22" r="2.4" fill="#0f766e"/><rect x="2" y="23" width="28" height="2.6" rx="1.3" fill="#0f766e"/></svg>
+      OpenRadome
+    </a>
+    <div class="links">
+      <a href="#why">Why</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#ask">Ask your station</a>
+      <a href="#install">Install</a>
+      <a href="#downloads">Downloads</a>
+      <a class="gh" href="https://github.com/openradome/openradome">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">Open source · GPL-3.0</span>
+      <h1>Your own window on the sky.</h1>
+      <p class="lead">OpenRadome is an ADS-B receiver for the Raspberry Pi and any Linux, Mac or Windows computer. It turns a
+        €20 USB radio into a live picture of the aircraft around you: a drop-in replacement for readsb, rewritten in
+        memory-safe Rust, with a status dashboard and an AI assistant interface built in.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install in one line</a>
+        <a class="btn" href="https://github.com/openradome/openradome">View on GitHub</a>
+      </div>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/openradome/openradome/main/install.sh \
+  | sudo bash -s -- --lat 51.5 --lon -0.1</code></pre>
+    </div>
+    <div class="scope" role="img" aria-label="A radar scope with aircraft around the receiver">
+      <svg viewBox="0 0 200 200" aria-hidden="true">
+        <defs>
+          <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#14b8a6" stop-opacity="0"/>
+            <stop offset="1" stop-color="#14b8a6" stop-opacity=".45"/>
+          </linearGradient>
+        </defs>
+        <g fill="none" stroke="#14b8a6" stroke-opacity=".35">
+          <circle cx="100" cy="100" r="30"/><circle cx="100" cy="100" r="60"/><circle cx="100" cy="100" r="90"/>
+          <path d="M100 10v180M10 100h180"/>
+        </g>
+        <g class="sweep"><path d="M100 100 L190 100 A90 90 0 0 0 163.6 36.4 Z" fill="url(#beam)"/></g>
+        <g fill="#0f766e">
+          <circle cx="132" cy="64" r="3.2"/><circle cx="58" cy="78" r="3.2"/><circle cx="147" cy="128" r="3.2"/>
+          <circle cx="83" cy="146" r="3.2"/><circle cx="112" cy="40" r="3.2"/><circle cx="40" cy="120" r="2.6"/>
+        </g>
+        <circle cx="100" cy="100" r="4" fill="#f59e0b"/>
+      </svg>
+    </div>
+  </div>
+</header>
+
+<section id="adsb">
+  <div class="wrap two">
+    <div>
+      <h2>What is ADS-B?</h2>
+      <p class="sub" style="margin-bottom:0">Aircraft work out their own position by GPS and broadcast it on 1090 MHz about twice a second,
+        with their identity, altitude, speed and heading. It is how air traffic control sees more, how aircraft see
+        each other, and much of the world's airspace now requires it. The signal is not encrypted: anyone
+        with a small receiver can hear aircraft 200 to 400 km away.</p>
+    </div>
+    <div>
+      <h2>Why run a receiver?</h2>
+      <p class="sub" style="margin-bottom:0">For your own live map, and to join the tens of thousands of volunteer stations that feed
+        flight-tracking networks such as adsb.lol, adsb.fi, airplanes.live, Flightradar24 and FlightAware. OpenRadome
+        is the software at the heart of such a station: it decodes the radio signal and shares the result with the
+        networks and maps you choose.</p>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap">
+    <h2>Why OpenRadome</h2>
+    <p class="sub">Same flags, same outputs, same wire formats as readsb, so it drops into an existing station unchanged. Plus
+      the things a station owner actually wants to know.</p>
+    <div class="grid">
+      <div class="card"><div class="icon">=</div><h3>Drop-in for readsb</h3><p>The same command-line options, Beast/raw/SBS ports and JSON files. tar1090, feed clients and MLAT clients work unchanged.</p></div>
+      <div class="card"><div class="icon">✓</div><h3>Verified byte for byte</h3><p>Recorded and live radio data decode to the same messages as readsb; aircraft.json, range outlines and API answers match.</p></div>
+      <div class="card"><div class="icon">⛨</div><h3>Memory-safe</h3><p>Written in Rust with <code>unsafe</code> forbidden, including a pure-Rust USB driver for the dongle. No librtlsdr, no libusb.</p></div>
+      <div class="card"><div class="icon">1</div><h3>One small binary</h3><p>A single static program for every Raspberry Pi, Linux PC, Mac and Windows. One TOML config file, explained line by line.</p></div>
+      <div class="card"><div class="icon">◔</div><h3>Dashboard built in</h3><p>Live figures, 24-hour graphs, the Pi's health and every connected feed on one page. Read-only, no JavaScript.</p></div>
+      <div class="card"><div class="icon">✦</div><h3>Ask your station</h3><p>A built-in MCP server lets AI assistants like Claude answer questions about your station from live data. Token-protected, HTTPS.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="dashboard">
+  <div class="wrap">
+    <h2>See how your station is doing</h2>
+    <p class="sub">Turn on <code>dashboard-port</code> and open the page from any browser on your network: message rate, aircraft,
+      range, signal and noise, dropped samples, CPU, temperature, power and Wi-Fi, with graphs for the last 24 hours.</p>
+    <figure>
+      <div class="shot"><img src="img/dashboard.png" alt="The OpenRadome dashboard: live figures, the Raspberry Pi's health, and graphs of message rate, aircraft, range and signal over the last hour" width="1200" height="1180" loading="lazy"></div>
+      <figcaption>A live station on a Raspberry Pi 2, late at night: 20 processes (the decoder and 19 feed clients) using under a third of the Pi.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="ask">
+  <div class="wrap two">
+    <div>
+      <h2>Ask your station</h2>
+      <p class="sub">OpenRadome speaks the Model Context Protocol, so an AI assistant can read your station's live figures and
+        explain them in plain language. Add it to Claude Code in one command:</p>
+      <pre><code>claude mcp add --transport http radome \
+  https://&lt;your-pi&gt;:8091/mcp \
+  --header "Authorization: Bearer &lt;token&gt;"</code></pre>
+      <p class="sub" style="margin:22px 0 10px">Then ask, for example:</p>
+      <ul class="qs">
+        <li><b>“How is the station doing?”</b> status, the Pi's health, connections</li>
+        <li><b>“When did the message rate drop tonight?”</b> minute-by-minute history</li>
+        <li><b>“What's the closest aircraft right now?”</b> live aircraft queries</li>
+        <li><b>“Is anyone squawking 7700?”</b> emergency codes</li>
+        <li><b>“How far can we see, and which direction is weakest?”</b> range outline</li>
+        <li><b>“Is the Pi too hot, or the power supply too weak?”</b> system figures</li>
+      </ul>
+    </div>
+    <div class="chat" aria-label="Example conversation">
+      <div class="msg you">How's my ADS-B station doing?</div>
+      <div class="tool">⏺ Called radome: station_status, system, connections</div>
+      <div class="msg ai">Healthy. About 77 messages a second from 8 aircraft, the furthest 73 km away (132 km since
+        start). Signal −17 dBFS against noise −41: a good margin, and no strong signals, so the gain is right.
+        No dropped samples.
+        <ul>
+          <li>The Pi: 34 % CPU, 36 °C, no under-voltage, disk 13 % full.</li>
+          <li>Wi-Fi at −68 dBm is fair; it would be the first suspect if feeds start dropping.</li>
+          <li>All feed clients and MLAT clients are connected.</li>
+        </ul>
+      </div>
+      <div class="msg you">What's the closest aircraft right now?</div>
+      <div class="tool">⏺ Called radome: aircraft_query (closest)</div>
+      <div class="msg ai">FDX5201, 16.7 nm away at 24,525 ft.</div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap two">
+    <div>
+      <h2>Install</h2>
+      <p class="sub">On Raspberry Pi OS, Debian, Ubuntu or any Linux with systemd, with an RTL-SDR dongle plugged in:</p>
+      <pre><code>curl -fsSL https://raw.githubusercontent.com/openradome/openradome/main/install.sh \
+  | sudo bash -s -- --lat 51.5 --lon -0.1</code></pre>
+      <p class="sub" style="margin-top:14px">Add <code>--dashboard-port 8090</code> for the dashboard and <code>--mcp-port 8091</code>
+        for the AI assistant interface. Re-run it to upgrade; <code>--rollback</code> goes back one version.</p>
+    </div>
+    <ol class="steps">
+      <li>Picks the right build for your CPU and checks it against the release's SHA-256 checksums.</li>
+      <li>Creates a <code>radome</code> system user, gives it the dongle, and keeps the TV driver off it.</li>
+      <li>Writes a fully commented <code>/etc/radome/radome.toml</code> with your choices filled in.</li>
+      <li>Starts the service: JSON in <code>/run/radome</code>, Beast out on port 30005 for your feeders and maps.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="downloads">
+  <div class="wrap">
+    <h2>Downloads</h2>
+    <p class="sub">Every release has one archive per platform, built and checksummed by GitHub Actions. On Linux the installer
+      picks for you; otherwise:</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>Your device</th><th>Download</th></tr></thead>
+        <tbody>
+          <tr><td>Raspberry Pi 5, 4, 3 or Zero 2 W on 64-bit Raspberry Pi OS</td><td><code>linux-arm64</code></td></tr>
+          <tr><td>Raspberry Pi 5, 4, 3, 2 or Zero 2 W on 32-bit Raspberry Pi OS</td><td><code>linux-armv7</code></td></tr>
+          <tr><td>Raspberry Pi 1, Zero or Zero W</td><td><code>linux-armv6</code></td></tr>
+          <tr><td>Linux PC, server, mini PC or VM (Intel or AMD)</td><td><code>linux-x86_64</code></td></tr>
+          <tr><td>Mac with Apple silicon / with an Intel processor</td><td><code>macos-arm64</code> / <code>macos-x86_64</code></td></tr>
+          <tr><td>Windows PC / Windows on ARM</td><td><code>windows-x86_64</code> / <code>windows-arm64</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:14px"><a href="https://github.com/openradome/openradome/releases/latest">All releases on GitHub →</a></p>
+  </div>
+</section>
+
+<section id="credits">
+  <div class="wrap two">
+    <div>
+      <h2>Standing on shoulders</h2>
+      <p class="sub" style="margin-bottom:0">OpenRadome is a from-scratch Rust reimplementation of
+        <a href="https://github.com/wiedehopf/readsb">readsb</a> by Matthias Wirth, the decoder most stations run, which grew from
+        dump1090 by Salvatore Sanfilippo, Oliver Jowett and FlightAware. readsb is the reference for its behaviour and
+        output, and its decoder logic is ported from readsb's GPL-3.0 code, hence the licence. Full credits are in
+        the NOTICE file.</p>
+    </div>
+    <div>
+      <h2>Open by design</h2>
+      <p class="sub" style="margin-bottom:0">Free software under the GPL-3.0. Your station's data stays yours: OpenRadome sends nothing
+        anywhere by itself, and you choose which networks to feed. The dashboard and the MCP server are off unless you
+        turn them on, read-only, and the MCP server needs a token.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div><b>OpenRadome</b> · an open-source ADS-B receiver · <a href="https://github.com/openradome/openradome">GitHub</a> ·
+      <a href="https://github.com/openradome/openradome/blob/main/README.md">Documentation</a> ·
+      <a href="https://github.com/openradome/openradome/blob/main/NOTICE">Credits</a></div>
+    <div>GPL-3.0-or-later. Built with the help of Claude. Not affiliated with readsb, FlightAware or any tracking network.</div>
+  </div>
+</footer>
+
+</body>
+</html>

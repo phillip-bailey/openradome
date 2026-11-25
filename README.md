@@ -26,7 +26,7 @@ report is *automatic*, it *depends* on the aircraft's own navigation rather than
 
 **What rustadsb is.** The software at the heart of such a receiving station. It turns the raw radio signal from
 the USB radio into a live list of aircraft with their positions, feeds the station's own map, and forwards the
-data to the flight-tracking networks. It is a memory-safe rewrite, in Rust, of readsb, the decoder most stations
+data to flight-tracking networks such as Flightradar24, FlightAware, ADS-B Exchange and adsb.lol. It is a memory-safe rewrite, in Rust, of readsb, the decoder most stations
 run today. It takes the same options and produces the same outputs, so it can replace readsb without changing the
 rest of a station. It runs in service on a Raspberry Pi, and its output is checked against readsb's on recorded
 and live data.

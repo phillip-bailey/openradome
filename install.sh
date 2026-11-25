@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
-#   sudo ./install.sh --archive rustadsb-v0.2.0-linux-armv7.tar.gz --lat ... --lon ...
+#   sudo ./install.sh --archive rustadsb-v0.3.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
 #   sudo ./install.sh --uninstall [--purge]
 #

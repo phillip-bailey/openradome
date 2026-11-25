@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "rustadsb"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "flate2",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "rustadsb-core"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "rustix"

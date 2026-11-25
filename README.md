@@ -542,7 +542,7 @@ On Raspberry Pi OS, Debian, Ubuntu or any Linux with systemd (x86_64, aarch64, a
 newer), with an RTL-SDR dongle plugged in:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/phillip-bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
+curl -fsSL https://raw.githubusercontent.com/phillip-bailey/openradome/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 ```
 
 The script picks the build for the CPU, downloads it with the release's `SHA256SUMS` and refuses a mismatch,
@@ -695,6 +695,10 @@ cargo run --release --example synth_iq -p rustadsb-core -- out.bin --random 300 
   (CRC, CPR, Mode A/C, Comm-B, WMM), network tests, and the golden tests against upstream.
 - `unsafe` is forbidden in the workspace; it would only be considered with a benchmark that proves the need.
 - Networking uses tokio, the command line clap.
+
+## Changes
+
+What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 

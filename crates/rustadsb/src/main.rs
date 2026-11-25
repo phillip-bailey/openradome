@@ -1,5 +1,6 @@
 mod apiserver;
 mod cli;
+mod config;
 mod dashboard;
 mod engine;
 mod globefiles;
@@ -56,7 +57,26 @@ fn viewadsb_args(args: Vec<String>) -> Vec<String> {
 }
 
 fn main() -> ExitCode {
-    let mut cli = Cli::parse_from(viewadsb_args(std::env::args().collect()));
+    let args = match config::expand(viewadsb_args(std::env::args().collect())) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("rustadsb: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut cli = Cli::parse_from(&args);
+    if cli.print_config {
+        return match config::to_toml(&args) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("rustadsb: --print-config: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if cli.no_interactive {
         cli.interactive = false;
     }

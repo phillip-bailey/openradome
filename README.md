@@ -160,6 +160,8 @@ decoder attached to the dongle, and the small per-network feed clients that forw
   sort order, drawn with plain ANSI codes.
 - **Dashboard** (`--dashboard-port <port>`, rustadsb only, off unless given): a status web page. See
   [Dashboard](#dashboard).
+- **Configuration file** (`--config <file.toml>`, `--print-config`; rustadsb only): every option from a TOML
+  file. See [Configuration file](#configuration-file).
 - `--stats`, `--raw`, `--onlyaddr`, `--show-only`, `--filter-DF` for the terminal.
 
 ## Not implemented
@@ -238,11 +240,12 @@ JSON files are written to a temporary file and renamed, so readers never see a p
 ## Dashboard
 
 An optional status page, served by rustadsb itself. It is off unless you give a port. With `install.sh`, add
-it to `NET_OPTIONS` in `/etc/default/rustadsb` (or install with `--dashboard-port 8090`), then restart:
+it to `/etc/rustadsb/rustadsb.toml` (or install with `--dashboard-port 8090`), then restart:
 
-```sh
-# /etc/default/rustadsb
-NET_OPTIONS="--net ... --net-bo-port 30005 --dashboard-port 8090"
+```toml
+# /etc/rustadsb/rustadsb.toml
+dashboard-port = 8090
+dashboard-bind-address = "0.0.0.0"   # only needed when net-bind-address keeps the data ports on 127.0.0.1
 ```
 
 ```sh
@@ -377,16 +380,44 @@ curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.s
 
 The script picks the build for the CPU, downloads it with the release's `SHA256SUMS` and refuses a mismatch,
 installs `/usr/local/bin/rustadsb`, creates the `rustadsb` system user (in `plugdev`), adds a udev rule for
-the dongle and keeps the DVB-T TV driver off it, then writes `/etc/default/rustadsb` (options) and
-`rustadsb.service` and starts it. JSON goes to `/run/rustadsb`, Beast to port 30005.
+the dongle and keeps the DVB-T TV driver off it, then writes the options file `/etc/rustadsb/rustadsb.toml`
+(see [Configuration file](#configuration-file)) and `rustadsb.service` and starts it. JSON goes to
+`/run/rustadsb`, Beast to port 30005.
 
-- Re-run it to upgrade; your `/etc/default/rustadsb` is kept, the previous binary saved as `rustadsb.prev`, and
+- Re-run it to upgrade; your `rustadsb.toml` is kept, the previous binary saved as `rustadsb.prev`, and
   other services still running the old binary (feed clients using `rustadsb --net-only`) are restarted.
   `--rollback` puts the previous binary back.
 - `--version vX.Y.Z` pins a release; `--archive FILE` installs a downloaded archive (offline).
 - If dump1090 is running it stops and asks: `--replace` disables it (it holds the dongle).
 - `--json-dir /run/<name>` changes where the JSON goes; `--bind 127.0.0.1` keeps the ports local.
 - `sudo ./install.sh --uninstall` removes it (`--purge` also the options file and user).
+- Installs from before 0.4 keep their options as shell variables in `/etc/default/rustadsb`, which still works.
+  `install.sh --migrate-config` converts it to `rustadsb.toml` (rustadsb itself does the conversion, and the result
+  must read back the same before anything changes); the old file is kept as `/etc/default/rustadsb.migrated-<date>`.
+
+### Configuration file
+
+`rustadsb --config <file.toml>` reads options from a TOML file. Each key is a long option's name as
+`rustadsb --help` lists it, without the dashes; `true` turns an on/off option on; an option that can be given
+more than once takes a list. Options on the command line override the file. A mistyped key is an error, not
+ignored.
+
+```toml
+device-type = "rtlsdr"
+gain = 49.6
+lat = 51.5
+lon = -0.1
+fix = true
+net = true
+net-bind-address = "127.0.0.1"
+net-bo-port = 30005
+net-bi-port = "30004,30104"
+write-json = "/run/rustadsb"
+net-connector = ["feed.adsb.lol,30004,beast_reduce_plus_out"]
+```
+
+`--print-config` prints the options it is given (and those from `--config`) as such a file, so a command line
+becomes a config file with `rustadsb <your options> --print-config > rustadsb.toml`.
 
 macOS and Windows: download the archive from the release page (see below), unpack it and run `rustadsb`
 directly.

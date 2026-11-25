@@ -25,6 +25,13 @@ pub enum DeviceType {
 )]
 pub struct Cli {
     // ---- General options ----
+    /// Read options from this TOML file: one key per long option (`net-bo-port = 30005`, `fix = true`,
+    /// lists for repeatable ones); options given on the command line override it
+    #[arg(long, value_name = "file.toml", help_heading = "General options")]
+    pub config: Option<std::path::PathBuf>,
+    /// Print the options given (and those from --config) as a TOML config file, then exit
+    #[arg(long, help_heading = "General options")]
+    pub print_config: bool,
     /// Reference/receiver surface latitude
     #[arg(
         long,

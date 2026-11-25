@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
-#   sudo ./install.sh --archive rustadsb-v0.3.1-linux-armv7.tar.gz --lat ... --lon ...
+#   sudo ./install.sh --archive rustadsb-v0.4.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
 #   sudo ./install.sh --uninstall [--purge]
 #
@@ -13,8 +13,9 @@
 #   * installs /usr/local/bin/rustadsb (the previous one is kept as rustadsb.prev);
 #   * creates the system user rustadsb, in plugdev, and a udev rule that gives plugdev the RTL-SDR dongle;
 #   * keeps the kernel's DVB-T driver off the dongle (it would claim it first);
-#   * writes /etc/default/rustadsb (only on the first install: your edits are kept on upgrade) and
-#     /etc/systemd/system/rustadsb.service, then starts it;
+#   * writes /etc/rustadsb/rustadsb.toml (only on the first install: your edits are kept on upgrade) and
+#     /etc/systemd/system/rustadsb.service, then starts it (installs from before 0.4 keep their
+#     /etc/default/rustadsb until --migrate-config converts it);
 #   * after an upgrade, restarts any other service still running the old binary (feed clients that run
 #     rustadsb --net-only, for example).
 # Re-running the script upgrades the binary and keeps the configuration.
@@ -26,14 +27,15 @@ REPO_URL="${RUSTADSB_REPO_URL:-$DEFAULT_REPO_URL}"
 VERSION="${RUSTADSB_VERSION:-latest}"
 PREFIX=/usr/local/bin
 BIN="$PREFIX/rustadsb"
-CONF=/etc/default/rustadsb
+CONF=/etc/rustadsb/rustadsb.toml
+LEGACY=/etc/default/rustadsb   # the options file before 0.4 (shell variables), still read until migrated
 UNIT=/etc/systemd/system/rustadsb.service
 UDEV=/etc/udev/rules.d/60-rustadsb-rtlsdr.rules
 BLACKLIST=/etc/modprobe.d/rustadsb-blacklist-dvb.conf
 USER_NAME=rustadsb
 
 LAT="" LON="" GAIN="49.6" JSON_DIR="/run/rustadsb" BIND="0.0.0.0" ARCHIVE="" REPLACE=0 UNINSTALL=0 PURGE=0 START=1
-ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}" DASHBOARD_PORT=""
+ROLLBACK=0 TOKEN="${RUSTADSB_TOKEN:-}" DASHBOARD_PORT="" MIGRATE=0
 
 usage() {
   sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
@@ -47,6 +49,7 @@ Options:
   --json-dir DIR        where aircraft.json goes (default /run/rustadsb, directly under /run)
   --bind ADDR           address the network ports listen on (default 0.0.0.0; 127.0.0.1 = this host only)
   --dashboard-port PORT serve the status web page on PORT (off by default; see the README)
+  --migrate-config      convert an older /etc/default/rustadsb into /etc/rustadsb/rustadsb.toml
   --replace             stop and disable dump1090 if it is running (it holds the dongle)
   --no-start            install everything but do not start the service
   --rollback            put the previous binary (rustadsb.prev) back and restart
@@ -70,6 +73,7 @@ while [ $# -gt 0 ]; do
     --json-dir) JSON_DIR="$2"; shift 2 ;;
     --bind) BIND="$2"; shift 2 ;;
     --dashboard-port) DASHBOARD_PORT="$2"; shift 2 ;;
+    --migrate-config) MIGRATE=1; shift ;;
     --replace) REPLACE=1; shift ;;
     --no-start) START=0; shift ;;
     --rollback) ROLLBACK=1; shift ;;
@@ -122,7 +126,8 @@ if [ "$UNINSTALL" = 1 ]; then
   rm -f "$UNIT" "$BIN" "$BIN.prev" "$UDEV" "$BLACKLIST"
   [ "$HAVE_SYSTEMD" = 1 ] && systemctl daemon-reload
   if [ "$PURGE" = 1 ]; then
-    rm -f "$CONF"
+    rm -f "$CONF" "$LEGACY"
+    rmdir "$(dirname "$CONF")" 2>/dev/null || true
     rm -rf /var/lib/rustadsb
     id "$USER_NAME" >/dev/null 2>&1 && userdel "$USER_NAME"
   fi
@@ -245,35 +250,112 @@ if lsmod 2>/dev/null | grep -q '^dvb_usb_rtl28xxu'; then
   modprobe -r dvb_usb_rtl28xxu 2>/dev/null || echo "warning: the DVB-T driver is loaded and could not be removed: reboot once" >&2
 fi
 
-if [ ! -f "$CONF" ]; then
-  POS=""
-  if [ -n "$LAT" ] && [ -n "$LON" ]; then POS="--lat $LAT --lon $LON"; else
-    echo "note: no --lat/--lon given; set them in $CONF for the range outline and single-message positions" >&2
+# --- configuration ---------------------------------------------------------------------------------
+# rustadsb --config /etc/rustadsb/rustadsb.toml: one key per long option. Installs from before 0.4 have
+# their options as shell variables in /etc/default/rustadsb; that keeps working until --migrate-config.
+MODE=toml
+if [ -f "$CONF" ]; then
+  say "kept your $CONF"
+  [ ! -f "$LEGACY" ] || echo "note: $LEGACY is not read any more (the options are in $CONF); remove it when you like" >&2
+  if [ -n "$DASHBOARD_PORT" ] && ! grep -v '^[[:space:]]*#' "$CONF" | grep -q 'dashboard-port'; then
+    echo "note: $CONF is kept as it is; to turn the dashboard on, add dashboard-port = $DASHBOARD_PORT there and restart" >&2
   fi
+elif [ -f "$LEGACY" ] && [ "$MIGRATE" = 1 ]; then
+  # the old unit gave these on its own command line
+  OLD_JSON=$(sed -n 's|^ExecStart=.* --write-json \([^ ]*\).*|\1|p' "$UNIT" 2>/dev/null | head -1)
+  JSON_DIR=${OLD_JSON:-$JSON_DIR}
+  # shellcheck source=/dev/null
+  OPTS=$(set +u; . "$LEGACY"; echo "${RECEIVER_OPTIONS:-} ${DECODER_OPTIONS:-} ${NET_OPTIONS:-} ${JSON_OPTIONS:-}")
+  mkdir -p "$(dirname "$CONF")"
+  # rustadsb itself turns the options into TOML, and must read the result back
+  # shellcheck disable=SC2086
+  "$NEW" $OPTS --write-json "$JSON_DIR" --write-state /var/lib/rustadsb --quiet --print-config >"$CONF.new" ||
+    die "could not convert $LEGACY (nothing was changed)"
+  "$NEW" --config "$CONF.new" --print-config >/dev/null || die "the converted $CONF.new does not read back (nothing was changed)"
+  {
+    echo "# Converted from $LEGACY by install.sh --migrate-config on $(date -u +%F)."
+    echo "# Edit, then: sudo systemctl restart rustadsb. The installer never overwrites this file."
+    cat "$CONF.new"
+  } >"$CONF"
+  rm -f "$CONF.new"
+  OLD_KEPT="$LEGACY.migrated-$(date +%Y%m%d-%H%M%S)"
+  mv "$LEGACY" "$OLD_KEPT"
+  say "converted $LEGACY to $CONF (the old file is now $OLD_KEPT)"
+elif [ -f "$LEGACY" ]; then
+  MODE=legacy
+  say "kept your $LEGACY (install.sh --migrate-config moves it to $CONF)"
+  if [ -n "$DASHBOARD_PORT" ] && ! grep -q -- '--dashboard-port' "$LEGACY"; then
+    echo "note: $LEGACY is kept as it is; to turn the dashboard on, add --dashboard-port $DASHBOARD_PORT to NET_OPTIONS there and restart" >&2
+  fi
+else
+  if [ -n "$LAT" ] && [ -n "$LON" ]; then POS="lat = $LAT
+lon = $LON"; else
+    POS="# lat = 51.5                         # set both, then restart
+# lon = -0.1"
+    echo "note: no --lat/--lon given; set lat and lon in $CONF for the range outline and single-message positions" >&2
+  fi
+  DASH_LINE="# dashboard-port = 8090              # the status web page: http://<this host>:8090/"
+  [ -z "$DASHBOARD_PORT" ] || DASH_LINE="dashboard-port = $DASHBOARD_PORT                # the status web page: http://<this host>:$DASHBOARD_PORT/"
+  mkdir -p "$(dirname "$CONF")"
   cat >"$CONF" <<EOF
-# rustadsb options (read by rustadsb.service). All flags: rustadsb --help.
+# rustadsb options, read by rustadsb.service (rustadsb --config $CONF).
+# One key per long option, as rustadsb --help lists them; true turns an on/off option on.
 # Edit, then: sudo systemctl restart rustadsb. The installer never overwrites this file.
-RECEIVER_OPTIONS="--device-type rtlsdr --device 0 --gain $GAIN --ppm 0"
-DECODER_OPTIONS="$POS --max-range 450 --fix --write-json-every 1"
-NET_OPTIONS="--net --net-bind-address $BIND --net-ri-port 30001 --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005${DASHBOARD_PORT:+ --dashboard-port $DASHBOARD_PORT}"
-JSON_OPTIONS="--json-location-accuracy 2 --range-outline-hours 24"
-# Optional extras, add to JSON_OPTIONS or NET_OPTIONS:
-#   --write-json-globe-index          globe tiles and traces for tar1090
-#   --net-api-port 8080               the HTTP API (/re-api)
-#   --dashboard-port 8090             the status web page: http://<this host>:8090/
+
+# Receiver: the RTL-SDR dongle
+device-type = "rtlsdr"
+device = 0
+gain = $GAIN                          # dB; 49.6 is the maximum
+ppm = 0
+
+# Decoder
+$POS
+max-range = 450                       # nautical miles
+fix = true                            # repair single-bit errors
+write-json-every = 1                  # seconds
+
+# Network: Beast out on 30005 for feed clients and maps, MLAT results in on 30104
+net = true
+net-bind-address = "$BIND"            # "127.0.0.1": this host only
+net-ri-port = 30001
+net-ro-port = 30002
+net-sbs-port = 30003
+net-bi-port = "30004,30104"
+net-bo-port = 30005
+$DASH_LINE
+# dashboard-bind-address = "0.0.0.0"  # the page on the LAN while net-bind-address keeps the data ports local
+
+# Output
+json-location-accuracy = 2
+range-outline-hours = 24
+write-json = "$JSON_DIR"              # must stay directly under /run (systemd creates it)
+write-state = "/var/lib/rustadsb"     # the range outline survives restarts
+quiet = true
+
+# Optional extras:
+# write-json-globe-index = true       # globe tiles and traces for tar1090
+# net-api-port = 8080                 # the HTTP API (/re-api)
 EOF
   say "wrote $CONF"
-else
-  say "kept your $CONF"
-  if [ -n "$DASHBOARD_PORT" ] && ! grep -q -- '--dashboard-port' "$CONF"; then
-    echo "note: $CONF is kept as it is; to turn the dashboard on, add --dashboard-port $DASHBOARD_PORT to NET_OPTIONS there and restart" >&2
-  fi
+fi
+if [ "$MODE" = toml ]; then
+  # the unit's runtime directory follows the file's write-json
+  CONF_JSON=$(sed -n 's|^[[:space:]]*write-json[[:space:]]*=[[:space:]]*"\([^"]*\)".*|\1|p' "$CONF" | head -1)
+  JSON_DIR=${CONF_JSON:-$JSON_DIR}
 fi
 
 RUNDIR=$(basename "$JSON_DIR")
 [ "$(dirname "$JSON_DIR")" = /run ] || die "--json-dir must be directly under /run (systemd creates it)"
+if [ "$MODE" = toml ]; then
+  OPTIONS_FILE=$CONF
+  SERVICE_LINES="ExecStart=$BIN --config $CONF"
+else
+  OPTIONS_FILE=$LEGACY
+  SERVICE_LINES="EnvironmentFile=$LEGACY
+ExecStart=$BIN \$RECEIVER_OPTIONS \$DECODER_OPTIONS \$NET_OPTIONS \$JSON_OPTIONS --write-json $JSON_DIR --write-state /var/lib/rustadsb --quiet"
+fi
 cat >"$UNIT" <<EOF
-# Installed by rustadsb's install.sh. Options: $CONF
+# Installed by rustadsb's install.sh. Options: $OPTIONS_FILE
 [Unit]
 Description=rustadsb ADS-B decoder (RTL-SDR)
 Documentation=${REPO_URL:-man:rustadsb}
@@ -282,12 +364,11 @@ After=network.target dump1090-fa.service dump1090-mutability.service
 Conflicts=dump1090-fa.service dump1090-mutability.service
 
 [Service]
-EnvironmentFile=$CONF
 User=$USER_NAME
 RuntimeDirectory=$RUNDIR
 RuntimeDirectoryMode=0755
 StateDirectory=rustadsb
-ExecStart=$BIN \$RECEIVER_OPTIONS \$DECODER_OPTIONS \$NET_OPTIONS \$JSON_OPTIONS --write-json $JSON_DIR --write-state /var/lib/rustadsb --quiet
+$SERVICE_LINES
 Type=simple
 Restart=always
 RestartSec=15
@@ -299,7 +380,11 @@ EOF
 say "wrote $UNIT"
 
 if [ "$HAVE_SYSTEMD" = 0 ]; then
-  say "no systemd here: start it yourself, e.g. sudo -u $USER_NAME $BIN --device-type rtlsdr ... --write-json $JSON_DIR"
+  if [ "$MODE" = toml ]; then
+    say "no systemd here: start it yourself, e.g. sudo -u $USER_NAME $BIN --config $CONF"
+  else
+    say "no systemd here: start it yourself as $USER_NAME with the options in $LEGACY"
+  fi
   exit 0
 fi
 systemctl daemon-reload
@@ -320,7 +405,7 @@ done
 if systemctl is-active --quiet rustadsb && [ -s "$JSON_DIR/aircraft.json" ]; then
   restart_stale
   say "rustadsb is running: $JSON_DIR/aircraft.json, Beast on port 30005. Logs: journalctl -u rustadsb"
-  DASH=$(grep -oE -- '--dashboard-port[ =][0-9]+' "$CONF" | grep -oE '[0-9]+$' | head -1 || true)
+  DASH=$(grep -v '^[[:space:]]*#' "$OPTIONS_FILE" | grep -oE 'dashboard-port[ =]+[0-9]+' | grep -oE '[0-9]+$' | head -1 || true)
   [ -z "$DASH" ] || say "dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):$DASH/"
 else
   systemctl --no-pager status rustadsb | tail -15 >&2 || true

@@ -4,14 +4,24 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// The tests in this file run one at a time: a port picked by one test is free only until the server
+/// binds it, and a parallel test's server or client socket (macOS hands out client ports from the same
+/// range) could take it in between.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `N` distinct free ports, held together until all are picked so the system cannot hand one out twice.
+fn free_ports<const N: usize>() -> [u16; N] {
+    let held: Vec<TcpListener> = (0..N)
+        .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
+        .collect();
+    std::array::from_fn(|i| held[i].local_addr().unwrap().port())
 }
 
 fn connect(port: u16) -> TcpStream {
@@ -51,9 +61,10 @@ const IDENT: &str = "8D4840D6202CC371C32CE0576098";
 
 #[test]
 fn raw_in_to_all_outputs_and_json() {
+    let _serial = serial();
     let dir = std::env::temp_dir().join(format!("rustadsb-net-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let (ri, bo, ro, sbs) = (free_port(), free_port(), free_port(), free_port());
+    let [ri, bo, ro, sbs] = free_ports();
     let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
         .args([
             "--net-bind-address",
@@ -133,7 +144,8 @@ fn hex(s: &str) -> Vec<u8> {
 
 #[test]
 fn beast_in_is_decoded_and_forwarded() {
-    let (bi, ro) = (free_port(), free_port());
+    let _serial = serial();
+    let [bi, ro] = free_ports();
     let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
         .args([
             "--net-bind-address",
@@ -168,6 +180,7 @@ fn beast_in_is_decoded_and_forwarded() {
 
 #[test]
 fn listen_port_in_use_is_an_error() {
+    let _serial = serial();
     let l = TcpListener::bind("0.0.0.0:0").unwrap();
     let port = l.local_addr().unwrap().port();
     let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
@@ -180,6 +193,7 @@ fn listen_port_in_use_is_an_error() {
 
 #[test]
 fn bad_connector_is_an_error() {
+    let _serial = serial();
     let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
         .args(["--net-connector", "127.0.0.1,1,telnet"])
         .output()

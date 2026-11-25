@@ -412,6 +412,7 @@ dependencies = [
  "flate2",
  "rtlsdr-nusb",
  "rustadsb-core",
+ "rustix",
  "ruzstd",
  "socket2",
  "tokio",

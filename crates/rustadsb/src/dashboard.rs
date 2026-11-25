@@ -7,7 +7,7 @@
 //! station with no internet; its Content-Security-Policy forbids scripts and outside resources.
 //! Nothing is drawn unless someone asks for the page.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
@@ -21,6 +21,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Handle;
 
 use crate::net::{self, ClientInfo};
+use crate::sysstats::{self, Sample};
 
 /// Points kept: one a minute for 24 hours.
 pub const HISTORY: usize = 24 * 60;
@@ -126,10 +127,34 @@ struct Live {
     rss_kb: Option<u64>,
 }
 
+/// One minute of the host's figures.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SysPoint {
+    t: i64,
+    /// Whole host, % of all cores.
+    cpu_pct: Option<f64>,
+    /// All rustadsb processes together, % of all cores.
+    rustadsb_pct: Option<f64>,
+    temp_c: Option<f64>,
+}
+
+/// The host's latest figures.
+#[derive(Debug, Clone, Default)]
+struct SysLive {
+    sample: Sample,
+    /// Whole host over the last 10 s, % of all cores.
+    cpu_pct: Option<f64>,
+    /// rustadsb processes running, and their CPU over the last minute in % of one core.
+    rustadsb_count: usize,
+    rustadsb_core_pct: Option<f64>,
+}
+
 #[derive(Debug, Default)]
 struct State {
     history: VecDeque<Point>,
     live: Live,
+    system: Option<SysLive>,
+    sys_history: VecDeque<SysPoint>,
 }
 
 struct Shared {
@@ -190,6 +215,7 @@ impl Dashboard {
                 }
             }
         });
+        spawn_sampler(rt, shared.clone());
         Ok(Self {
             shared,
             minute: Minute::default(),
@@ -243,6 +269,75 @@ impl Dashboard {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.shared.state.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// The host's counters at the start of the current minute.
+struct MinuteStart {
+    cpu_ticks: (u64, u64),
+    /// CPU ticks of each rustadsb process, by pid.
+    procs: HashMap<u32, u64>,
+    at: i64,
+}
+
+/// Read the host's figures every 10 s, and keep one point a minute. Runs off the decoder's thread;
+/// stops at once where there is nothing to read (not Linux).
+fn spawn_sampler(rt: &Handle, shared: Arc<Shared>) {
+    rt.spawn(async move {
+        let mut timer = tokio::time::interval(Duration::from_secs(10));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut prev: Option<Sample> = None;
+        let mut anchor: Option<MinuteStart> = None;
+        for n in 0u64.. {
+            timer.tick().await;
+            let scan = n % 6 == 0;
+            let read = tokio::task::spawn_blocking(move || {
+                (sysstats::read(), scan.then(sysstats::rustadsb_ticks))
+            })
+            .await;
+            let Ok((Some(sample), procs)) = read else {
+                return;
+            };
+            let now = net::now_ms();
+            let cpu_pct = prev
+                .as_ref()
+                .and_then(|p| sysstats::busy_pct(p.cpu_ticks, sample.cpu_ticks));
+            let mut st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
+            let live = st.system.get_or_insert_with(SysLive::default);
+            live.cpu_pct = cpu_pct;
+            if let Some(procs) = procs {
+                if let Some(a) = &anchor
+                    && now > a.at
+                {
+                    // ticks are 10 ms
+                    let core_pct = sysstats::ticks_between(&a.procs, &procs) as f64 * 10.0 * 100.0
+                        / (now - a.at) as f64;
+                    live.rustadsb_core_pct = Some(core_pct);
+                    let point = SysPoint {
+                        t: now,
+                        cpu_pct: sysstats::busy_pct(a.cpu_ticks, sample.cpu_ticks),
+                        rustadsb_pct: Some(core_pct / sample.cores as f64),
+                        temp_c: sample.temp_c,
+                    };
+                    st.sys_history.push_back(point);
+                    while st.sys_history.len() > HISTORY {
+                        st.sys_history.pop_front();
+                    }
+                }
+                let live = st.system.get_or_insert_with(SysLive::default);
+                live.rustadsb_count = procs.len();
+                anchor = Some(MinuteStart {
+                    cpu_ticks: sample.cpu_ticks,
+                    procs,
+                    at: now,
+                });
+            }
+            if let Some(live) = st.system.as_mut() {
+                live.sample = sample.clone();
+            }
+            drop(st);
+            prev = Some(sample);
+        }
+    });
 }
 
 /// CPU time (user + system) this process has used, in ms. Linux reports it in clock ticks, which
@@ -306,11 +401,13 @@ async fn serve(mut sock: TcpStream, shared: Arc<Shared>, idle: Duration) {
     let reply = match tokio::time::timeout(idle, read).await {
         Ok(Request::Complete) => {
             let page = || {
-                let (history, live) = {
+                let (history, live, system, sys_history) = {
                     let st = shared.state.lock().unwrap_or_else(|e| e.into_inner());
                     (
                         st.history.iter().cloned().collect::<Vec<_>>(),
                         st.live.clone(),
+                        st.system.clone(),
+                        st.sys_history.iter().cloned().collect::<Vec<_>>(),
                     )
                 };
                 render(&PageData {
@@ -320,6 +417,8 @@ async fn serve(mut sock: TcpStream, shared: Arc<Shared>, idle: Duration) {
                     now: live.now.max(net::now_ms()),
                     live,
                     history,
+                    system,
+                    sys_history,
                     clients: net::clients(),
                 })
             };
@@ -392,6 +491,8 @@ struct PageData {
     now: i64,
     live: Live,
     history: Vec<Point>,
+    system: Option<SysLive>,
+    sys_history: Vec<SysPoint>,
     clients: Vec<ClientInfo>,
 }
 
@@ -646,6 +747,80 @@ td.num { font-variant-numeric:tabular-nums; }
 footer { margin-top:24px; color:var(--muted); font-size:12px; }
 "#;
 
+/// The "System" tiles: the host the decoder runs on.
+fn system_tiles(h: &mut String, sys: &SysLive) {
+    let s = &sys.sample;
+    h.push_str(&tile(
+        "CPU",
+        &opt(sys.cpu_pct, " %"),
+        &format!(
+            "all {} cores · load {} / {} / {}",
+            s.cores,
+            num(s.load[0]),
+            num(s.load[1]),
+            num(s.load[2])
+        ),
+    ));
+    h.push_str(&tile(
+        "rustadsb processes",
+        &sys.rustadsb_count.to_string(),
+        &format!(
+            "{} of one core together, last minute",
+            opt(sys.rustadsb_core_pct, " %")
+        ),
+    ));
+    let mb = |kb: u64| format!("{:.0}", kb as f64 / 1024.0);
+    h.push_str(&tile(
+        "Memory used",
+        &format!(
+            "{} MB",
+            mb(s.mem_total_kb.saturating_sub(s.mem_available_kb))
+        ),
+        &format!(
+            "of {} MB · swap {} MB used",
+            mb(s.mem_total_kb),
+            mb(s.swap_total_kb.saturating_sub(s.swap_free_kb))
+        ),
+    ));
+    if let Some(t) = s.temp_c {
+        let power = match s.undervoltage {
+            Some(true) => "<span class=\"bad\">under-voltage now: weak power supply</span>",
+            Some(false) => "power supply OK",
+            None => "",
+        };
+        h.push_str(&tile("Temperature", &format!("{t:.0} °C"), power));
+    }
+    if let Some((used, avail, size)) = s.disk.filter(|d| d.0 + d.1 > 0) {
+        // binary units, as `df -h` and the memory figure
+        let gb = |b: u64| b as f64 / (1u64 << 30) as f64;
+        h.push_str(&tile(
+            "Disk",
+            // `df`'s percentage: of the space users can have (the rest is reserved for root)
+            &format!("{:.0} %", used as f64 * 100.0 / (used + avail) as f64),
+            &format!("{:.1} of {:.1} GB used", gb(used), gb(size)),
+        ));
+    }
+    if let Some((iface, level)) = &s.wifi {
+        let quality = match *level {
+            l if l >= -60.0 => "good",
+            l if l >= -70.0 => "fair",
+            _ => "weak",
+        };
+        h.push_str(&tile(
+            "Wi-Fi signal",
+            &format!("{level:.0} dBm"),
+            &format!("{} · {quality}", esc(iface)),
+        ));
+    }
+    if let Some(up) = s.uptime_s {
+        h.push_str(&tile(
+            "System up",
+            &duration((up * 1000.0) as i64),
+            "since the last boot",
+        ));
+    }
+}
+
 fn render(p: &PageData) -> String {
     let last = p.history.last();
     let day: Vec<&Point> = p.history.iter().filter(|x| x.t >= p.now - DAY_MS).collect();
@@ -735,7 +910,18 @@ fn render(p: &PageData) -> String {
                 .map_or("–".into(), |k| format!("{:.1} MB", k as f64 / 1024.0))
         ),
     ));
-    let span = span_for(p.history.first().map_or(0, |f| p.now - f.t + MINUTE_MS));
+    if let Some(sys) = &p.system {
+        h.push_str("</div><h2>System</h2><div class=\"tiles\">");
+        system_tiles(&mut h, sys);
+    }
+    let first = [
+        p.history.first().map(|x| x.t),
+        p.sys_history.first().map(|x| x.t),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    let span = span_for(first.map_or(0, |t| p.now - t + MINUTE_MS));
     let _ = write!(
         h,
         "</div><h2>Last {}</h2><div class=\"charts\">",
@@ -807,6 +993,44 @@ fn render(p: &PageData) -> String {
                 },
             ],
             false,
+        ));
+    }
+    if p.system.is_some() {
+        let sys = |f: fn(&SysPoint) -> Option<f64>| -> Vec<(i64, Option<f64>)> {
+            p.sys_history.iter().map(|x| (x.t, f(x))).collect()
+        };
+        let cores = p.system.as_ref().map_or(1, |s| s.sample.cores);
+        h.push_str(&chart(
+            &format!("CPU, all {cores} cores"),
+            " %",
+            p.now,
+            span,
+            &[
+                Series {
+                    name: "whole system",
+                    class: "s1",
+                    values: sys(|x| x.cpu_pct),
+                },
+                Series {
+                    name: "rustadsb",
+                    class: "s2",
+                    values: sys(|x| x.rustadsb_pct),
+                },
+            ],
+            true,
+        ));
+        h.push_str(&chart(
+            "Temperature",
+            " °C",
+            p.now,
+            span,
+            &[Series {
+                name: "CPU",
+                class: "s1",
+                values: sys(|x| x.temp_c),
+            }],
+            // from 0 °C: a fraction of a degree must not look like a cliff
+            true,
         ));
     }
     h.push_str("</div>");
@@ -1031,6 +1255,26 @@ mod tests {
                 msg_rate: 12.0,
                 ..Point::default()
             }],
+            system: Some(SysLive {
+                sample: Sample {
+                    cores: 4,
+                    mem_total_kb: 942_120,
+                    mem_available_kb: 511_204,
+                    temp_c: Some(41.2),
+                    undervoltage: Some(true),
+                    wifi: Some(("wlan0<".into(), -70.0)),
+                    ..Sample::default()
+                },
+                cpu_pct: Some(41.0),
+                rustadsb_count: 20,
+                rustadsb_core_pct: Some(106.9),
+            }),
+            sys_history: vec![SysPoint {
+                t: 60_000,
+                cpu_pct: Some(41.0),
+                rustadsb_pct: Some(26.7),
+                temp_c: Some(41.2),
+            }],
             clients: vec![ClientInfo {
                 kind: "beast out :30005".into(),
                 peer: "<script>".into(),
@@ -1042,6 +1286,12 @@ mod tests {
         assert!(page.contains("rustadsb &lt;test&gt;"));
         assert!(page.contains("Connected to this decoder (1)"));
         assert!(page.contains("Signal and noise"));
+        assert!(page.contains("<h2>System</h2>") && page.contains("CPU, all 4 cores"));
+        assert!(page.contains("421 MB") && page.contains("under-voltage now"));
+        assert!(
+            page.contains("wlan0&lt;"),
+            "the interface name is escaped too"
+        );
     }
 
     #[test]

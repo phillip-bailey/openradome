@@ -8,6 +8,7 @@ mod jsonout;
 mod net;
 mod sdr;
 mod state;
+mod sysstats;
 
 use std::fs::File;
 use std::io::{self, Read};

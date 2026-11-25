@@ -15,5 +15,9 @@ tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "io-util", "
 flate2 = "1.1.11"
 ruzstd = "0.9.1"
 
+# root filesystem statistics for the dashboard (already in the build through the USB driver)
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.6", features = ["fs"] }
+
 [lints]
 workspace = true

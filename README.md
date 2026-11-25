@@ -231,7 +231,7 @@ As with upstream, a single-value option given twice takes the last value, which 
 | `stats.json` | every 10 s | receiver and tracker statistics |
 | `outline.json` | every 15 s | farthest position per direction |
 | `<--write-state>/internal_state/rangeDirs.gz` | every 5 min and at exit | the range outline, in upstream's format |
-| Dashboard | `--dashboard-port 8090` (off unless given) | status web page: live figures, 24 h graphs, open connections |
+| Dashboard | `--dashboard-port 8090` (off unless given) | status web page: live figures, system figures, 24 h graphs, open connections |
 
 JSON files are written to a temporary file and renamed, so readers never see a partial file.
 
@@ -254,7 +254,11 @@ Then open `http://<the Pi's address>:8090/`. The page shows:
 - **Now:** messages per second, aircraft (and how many have a position), the furthest aircraft, positions
   decoded, signal and noise, strong signals (too many means the gain is too high), dropped samples (should be 0),
   and the decoder's own CPU and memory use.
-- **The last 24 hours:** graphs of the message rate, aircraft, range, and signal and noise, one point a minute.
+- **System** (Linux): the whole machine's CPU and load, the CPU of all rustadsb processes together (decoder and
+  feed clients), memory and swap, temperature and, on a Raspberry Pi, the under-voltage warning (a weak power
+  supply), disk space, Wi-Fi signal and uptime. Read from `/proc` and `/sys` every 10 s, by a background task.
+- **The last 24 hours:** graphs of the message rate, aircraft, range, signal and noise, CPU (whole machine and
+  rustadsb) and temperature, one point a minute. After a restart the time axis starts at an hour and grows.
 - **Connections:** everything connected to the decoder's ports right now (feed clients, MLAT results, tar1090,
   viewers) and for how long, and the connections it makes itself (`--net-connector`).
 

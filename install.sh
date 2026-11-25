@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rustadsb installer: download a release, check it, and run it as a systemd service.
 #
-#   curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
+#   curl -fsSL https://raw.githubusercontent.com/phillip-bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
 #   sudo ./install.sh --archive rustadsb-v0.5.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # The repository releases are downloaded from (any GitHub or Gitea repository URL works).
-DEFAULT_REPO_URL="https://github.com/p0bailey/rustadbtest"
+DEFAULT_REPO_URL="https://github.com/phillip-bailey/rustadbtest"
 REPO_URL="${RUSTADSB_REPO_URL:-$DEFAULT_REPO_URL}"
 VERSION="${RUSTADSB_VERSION:-latest}"
 PREFIX=/usr/local/bin

@@ -542,7 +542,7 @@ On Raspberry Pi OS, Debian, Ubuntu or any Linux with systemd (x86_64, aarch64, a
 newer), with an RTL-SDR dongle plugged in:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
+curl -fsSL https://raw.githubusercontent.com/phillip-bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 ```
 
 The script picks the build for the CPU, downloads it with the release's `SHA256SUMS` and refuses a mismatch,

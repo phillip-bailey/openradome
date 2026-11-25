@@ -195,7 +195,8 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
     if let Some(port) = cli.dashboard_port {
         let bind = cli
-            .net_bind_address
+            .dashboard_bind_address
+            .or(cli.net_bind_address)
             .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
         engine.dashboard = Some(
             dashboard::Dashboard::start(

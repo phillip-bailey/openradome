@@ -146,9 +146,13 @@ pub struct Cli {
     #[arg(long, help_heading = "Network options")]
     pub tar1090_use_api: bool,
     /// Serve a status web page on this port: live figures, 24 h graphs and the open connections
-    /// (rustadsb only; off unless given; listens on --net-bind-address)
+    /// (rustadsb only; off unless given; listens on --dashboard-bind-address)
     #[arg(long, value_name = "port", help_heading = "Network options")]
     pub dashboard_port: Option<u16>,
+    /// Address the dashboard listens on (default: --net-bind-address, else any). Lets the page be
+    /// reached from the LAN while the data ports stay on 127.0.0.1
+    #[arg(long, value_name = "ip", help_heading = "Network options")]
+    pub dashboard_bind_address: Option<std::net::IpAddr>,
     /// Write specially indexed globe_xxxx.binCraft files and traces (for tar1090)
     #[arg(long, help_heading = "General options")]
     pub write_json_globe_index: bool,
@@ -501,6 +505,21 @@ mod tests {
         assert!(!parse(&[]).network_enabled());
         assert!(parse(&["--net"]).network_enabled());
         assert!(parse(&["--net-bo-port", "30005"]).network_enabled());
+        let c = parse(&[
+            "--net-bind-address",
+            "127.0.0.1",
+            "--dashboard-port",
+            "8090",
+            "--dashboard-bind-address",
+            "0.0.0.0",
+        ]);
+        assert_eq!(c.dashboard_port, Some(8090));
+        assert_eq!(c.dashboard_bind_address, Some("0.0.0.0".parse().unwrap()));
+        assert_eq!(
+            c.net_bind_address,
+            Some("127.0.0.1".parse().unwrap()),
+            "the data ports stay local"
+        );
         assert!(
             parse(&[
                 "--net-connector",

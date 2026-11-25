@@ -268,9 +268,10 @@ process (a feed client) can have a dashboard too, without them.
 How it works: the decoder adds one point a minute to an in-memory history of 24 hours (1440 points, tens of kB).
 The history starts again when the decoder restarts. The page is drawn only when someone opens it: HTML with SVG
 graphs, no JavaScript, nothing loaded from the internet, and it reloads itself every 10 s. It is read-only:
-it answers `GET` for `/` and nothing else changes anything. It listens on `--net-bind-address` like the other
-ports, so `--net-bind-address 127.0.0.1` keeps it to the Pi itself; there is no password, so do not expose the
-port to the internet.
+it answers `GET` for `/` and nothing else changes anything. It listens on `--dashboard-bind-address` if given, else on
+`--net-bind-address` like the other ports. So a station whose data ports are kept local
+(`--net-bind-address 127.0.0.1`) can still show the page on the LAN with `--dashboard-bind-address 0.0.0.0` (or the
+Pi's LAN address). There is no password, so do not expose the port to the internet.
 
 ## Architecture
 

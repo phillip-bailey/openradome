@@ -6,7 +6,6 @@
 #
 # Linux and Windows are cross-compiled on Linux with cargo-zigbuild; Linux binaries are linked against glibc 2.31
 # (Debian 11 / Raspberry Pi OS Bullseye and later). macOS is built natively on a macOS runner.
-# (Gitea reads .gitea/workflows instead; this file is for GitHub only.)
 name: build
 
 on:

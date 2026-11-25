@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rustadsb installer: download a release, check it, and run it as a systemd service.
 #
-#   curl -fsSL <repo>/raw/branch/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
+#   curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 #   sudo ./install.sh --lat 51.5 --lon -0.1              # from a checkout
 #   sudo ./install.sh --archive rustadsb-v0.2.0-linux-armv7.tar.gz --lat ... --lon ...
 #   sudo ./install.sh --rollback                         # back to the previous binary
@@ -20,8 +20,8 @@
 # Re-running the script upgrades the binary and keeps the configuration.
 set -euo pipefail
 
-# The repository releases are downloaded from: set DEFAULT_REPO_URL when the project is published.
-DEFAULT_REPO_URL=""
+# The repository releases are downloaded from (any GitHub or Gitea repository URL works).
+DEFAULT_REPO_URL="https://github.com/p0bailey/rustadbtest"
 REPO_URL="${RUSTADSB_REPO_URL:-$DEFAULT_REPO_URL}"
 VERSION="${RUSTADSB_VERSION:-latest}"
 PREFIX=/usr/local/bin
@@ -51,7 +51,8 @@ Options:
   --rollback            put the previous binary (rustadsb.prev) back and restart
   --uninstall [--purge] remove the service and binary (--purge also removes the configuration and user)
 Environment: RUSTADSB_REPO_URL (default $REPO_URL), RUSTADSB_VERSION, RUSTADSB_TOKEN (for a private
-release page: sent as an Authorization header).
+Gitea release page: sent as an Authorization header). From a private GitHub repository, download the
+archive and SHA256SUMS with `gh release download` and use --archive.
 EOF
 }
 

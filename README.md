@@ -295,7 +295,7 @@ On Raspberry Pi OS, Debian, Ubuntu or any Linux with systemd (x86_64, aarch64, a
 newer), with an RTL-SDR dongle plugged in:
 
 ```sh
-curl -fsSL <repository>/raw/branch/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
+curl -fsSL https://raw.githubusercontent.com/p0bailey/rustadbtest/main/install.sh | sudo bash -s -- --lat 51.5 --lon -0.1
 ```
 
 The script picks the build for the CPU, downloads it with the release's `SHA256SUMS` and refuses a mismatch,
@@ -306,7 +306,6 @@ the dongle and keeps the DVB-T TV driver off it, then writes `/etc/default/rusta
 - Re-run it to upgrade; your `/etc/default/rustadsb` is kept, the previous binary saved as `rustadsb.prev`, and
   other services still running the old binary (feed clients using `rustadsb --net-only`) are restarted.
   `--rollback` puts the previous binary back.
-- `RUSTADSB_TOKEN` sends a token for a private release page.
 - `--version vX.Y.Z` pins a release; `--archive FILE` installs a downloaded archive (offline).
 - If dump1090 is running it stops and asks: `--replace` disables it (it holds the dongle).
 - `--json-dir /run/<name>` changes where the JSON goes; `--bind 127.0.0.1` keeps the ports local.
@@ -351,11 +350,15 @@ later. Check a download against the release's `SHA256SUMS` with `sha256sum -c --
 
 ## Releases
 
-On GitHub, `.github/workflows/build.yml` tests on Linux and macOS, builds all eight archives (macOS on a
-macOS runner) and, for a tag `vX.Y.Z`, publishes them as a release with `SHA256SUMS`.
+Releases are built by GitHub Actions (`.github/workflows/build.yml`). Every push and pull request runs the
+tests on Linux and macOS and builds all eight archives (Linux and Windows cross-compiled with cargo-zigbuild,
+macOS on a macOS runner); the archives are kept as workflow artifacts for 14 days. Pushing a tag `vX.Y.Z`
+also publishes them as a GitHub release with `SHA256SUMS` (a tag with a `-`, like `v1.0.0-rc1`, is a
+pre-release):
 
-On Gitea, every tag `vX.Y.Z` builds and publishes a release (`.gitea/workflows/build.yml`): tests first,
-then one archive per target, plus `SHA256SUMS`.
+```sh
+git tag v0.3.0 && git push origin v0.3.0
+```
 
 | Archive | Rust target it is built for |
 |---|---|
@@ -368,11 +371,9 @@ then one archive per target, plus `SHA256SUMS`.
 | `macos-arm64` | `aarch64-apple-darwin` |
 | `macos-x86_64` | `x86_64-apple-darwin` |
 
-Releases up to v0.2.0 on Gitea name the archives after the Rust target instead (`rustadsb-v0.2.0-armv7-unknown-linux-gnueabihf.tar.gz`);
-`install.sh` tries the plain name first and falls back to that.
-
-Linux binaries need glibc 2.31 or newer. CI cannot build macOS (it needs Apple's SDK): after the tag's run finishes,
-run `make release-mac TAG=vX.Y.Z` on a Mac to add the two macOS archives and regenerate `SHA256SUMS`.
+Releases before the plain names named the archives after the Rust target
+(`rustadsb-v0.2.0-armv7-unknown-linux-gnueabihf.tar.gz`); `install.sh` tries the plain name first and falls
+back to that. Linux binaries need glibc 2.31 or newer.
 Tested on real hardware so far: armv7 (Pi 2) and macOS Apple silicon. The other targets build but have not been run.
 
 ## Building and deploying

@@ -707,6 +707,10 @@ cargo run --release --example synth_iq -p openradome-core -- out.bin --random 30
 
 What changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
+## Security
+
+Found a security problem? Please report it privately, not in a public issue: see [SECURITY.md](SECURITY.md).
+
 ## Licence
 
 GPL-3.0-or-later (see `COPYING`). The decoding, tracking and output logic is ported from

@@ -7,6 +7,10 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
 
 ## [Unreleased]
 
+### Added
+- `SECURITY.md`: how to report a vulnerability privately (GitHub private vulnerability reporting), what
+  happens next, supported versions, scope and hardening tips.
+
 ### Changed
 - Website: the AI section is now "Talk to your receiver."
 

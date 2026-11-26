@@ -7,6 +7,9 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
 
 ## [Unreleased]
 
+### Changed
+- Website: the AI section is now "Talk to your receiver."
+
 ## [0.6.0] - 2026-11-26
 
 The project is now **OpenRadome**: one name for the project, the repository, the program and its files.

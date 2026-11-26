@@ -20,7 +20,7 @@ report is *automatic*, it *depends* on the aircraft's own navigation rather than
   know what is nearby, not only what the ground tells them.
 - **It is required.** Since 2020, most aircraft in United States controlled airspace and larger aircraft in Europe
   must broadcast ADS-B, and many other countries have similar rules. Nearly every airliner transmits it.
-- **Anyone can receive it.** The signal is not encrypted. A USB radio costing about 20 € and an antenna on a
+- **Anyone can receive it.** The signal is not encrypted. A USB radio costing about $50 and an antenna on a
   Raspberry Pi pick up aircraft 200 to 400 km away. Tens of thousands of volunteer stations built this way feed
   flight-tracking services (Flightradar24, FlightAware, ADS-B Exchange, adsb.lol, adsb.fi, airplanes.live and
   others), whose maps are used by the public, journalists, researchers studying emissions and noise, airports and
@@ -56,7 +56,7 @@ the parts of upstream a feeder station uses, not the whole of it (see [Not imple
 
 Aircraft constantly announce themselves by radio on 1090 MHz. Their transponders answer radar interrogations
 (Mode S, Mode A/C), and most airliners also broadcast their own GPS position, altitude, speed, heading and callsign
-twice a second without being asked (ADS-B). Anyone can receive this: a 20 € RTL-SDR USB dongle and an antenna on a
+twice a second without being asked (ADS-B). Anyone can receive this: a $50 RTL-SDR USB dongle and an antenna on a
 Raspberry Pi will hear aircraft 200-400 km away. Thousands of people run such stations, for their own map and to
 feed community flight-tracking networks (adsb.lol, adsb.fi, ADS-B Exchange, airplanes.live, Flightradar24,
 FlightAware and others), which together build the worldwide live picture of air traffic, including the

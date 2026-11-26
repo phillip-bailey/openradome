@@ -1,8 +1,8 @@
 //! Command line, with upstream's long option names.
 
 use clap::{ArgAction, Parser, ValueEnum};
-use rustadsb_core::convert::InputFormat;
-use rustadsb_core::demod::{PREAMBLE_THRESHOLD_MAX, PREAMBLE_THRESHOLD_MIN};
+use openradome_core::convert::InputFormat;
+use openradome_core::demod::{PREAMBLE_THRESHOLD_MAX, PREAMBLE_THRESHOLD_MIN};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "lower")]
@@ -17,7 +17,7 @@ pub enum DeviceType {
 // Like upstream, a single-value option given twice takes the last value (feeder installers do
 // that, e.g. --uuid-file).
 #[command(
-    name = "rustadsb",
+    name = "openradome",
     version,
     about,
     disable_help_subcommand = true,
@@ -153,7 +153,7 @@ pub struct Cli {
     #[arg(long, help_heading = "Network options")]
     pub tar1090_use_api: bool,
     /// Serve a status web page on this port: live figures, 24 h graphs and the open connections
-    /// (rustadsb only; off unless given; listens on --dashboard-bind-address)
+    /// (openradome only; off unless given; listens on --dashboard-bind-address)
     #[arg(long, value_name = "port", help_heading = "Network options")]
     pub dashboard_port: Option<u16>,
     /// Address the dashboard listens on (default: --net-bind-address, else any). Lets the page be
@@ -161,7 +161,7 @@ pub struct Cli {
     #[arg(long, value_name = "ip", help_heading = "Network options")]
     pub dashboard_bind_address: Option<std::net::IpAddr>,
     /// Serve a Model Context Protocol (MCP) server on this port, at /mcp: read-only tools an AI
-    /// assistant can ask about the station (rustadsb only; off unless given; needs --mcp-token-file)
+    /// assistant can ask about the station (openradome only; off unless given; needs --mcp-token-file)
     #[arg(long, value_name = "port", help_heading = "Network options")]
     pub mcp_port: Option<u16>,
     /// Address the MCP server listens on (default: --net-bind-address, else any)
@@ -205,7 +205,7 @@ pub struct Cli {
     /// Write state to disk (the range outline) so it survives a restart
     #[arg(long, value_name = "dir", help_heading = "General options")]
     pub write_state: Option<std::path::PathBuf>,
-    /// Accepted for compatibility: upstream's interval for its aircraft state, which rustadsb
+    /// Accepted for compatibility: upstream's interval for its aircraft state, which openradome
     /// does not keep (the outline is saved every 5 minutes)
     #[arg(long, value_name = "seconds", help_heading = "General options")]
     pub write_state_every: Option<f64>,
@@ -493,7 +493,7 @@ mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Cli {
-        Cli::try_parse_from(std::iter::once("rustadsb").chain(args.iter().copied())).unwrap()
+        Cli::try_parse_from(std::iter::once("openradome").chain(args.iter().copied())).unwrap()
     }
 
     #[test]
@@ -525,9 +525,9 @@ mod tests {
         assert_eq!(c.ifile.as_deref(), Some("cap.bin"));
         assert_eq!(c.iformat, Some(InputFormat::Sc16Q11));
         assert!(c.raw && c.modeac);
-        assert!(Cli::try_parse_from(["rustadsb", "--iformat", "bogus"]).is_err());
+        assert!(Cli::try_parse_from(["openradome", "--iformat", "bogus"]).is_err());
         // a repeated single-value option takes the last value, like upstream
-        let c = Cli::try_parse_from(["rustadsb", "--uuid-file=/a", "--uuid-file", "/b"]).unwrap();
+        let c = Cli::try_parse_from(["openradome", "--uuid-file=/a", "--uuid-file", "/b"]).unwrap();
         assert_eq!(c.uuid_file.as_deref(), Some(std::path::Path::new("/b")));
     }
 

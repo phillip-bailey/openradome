@@ -14,8 +14,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rustadsb_core::json::StatsBlock;
-use rustadsb_core::track::Tracker;
+use openradome_core::json::StatsBlock;
+use openradome_core::track::Tracker;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Handle;
@@ -133,8 +133,8 @@ struct SysPoint {
     t: i64,
     /// Whole host, % of all cores.
     cpu_pct: Option<f64>,
-    /// All rustadsb processes together, % of all cores.
-    rustadsb_pct: Option<f64>,
+    /// All openradome processes together, % of all cores.
+    openradome_pct: Option<f64>,
     temp_c: Option<f64>,
 }
 
@@ -144,9 +144,9 @@ struct SysLive {
     sample: Sample,
     /// Whole host over the last 10 s, % of all cores.
     cpu_pct: Option<f64>,
-    /// rustadsb processes running, and their CPU over the last minute in % of one core.
-    rustadsb_count: usize,
-    rustadsb_core_pct: Option<f64>,
+    /// openradome processes running, and their CPU over the last minute in % of one core.
+    openradome_count: usize,
+    openradome_core_pct: Option<f64>,
 }
 
 #[derive(Debug, Default)]
@@ -301,7 +301,7 @@ impl StatusHandle {
     pub fn for_test() -> Self {
         Self(Arc::new(Shared {
             state: Mutex::new(State::default()),
-            version: "rustadsb test",
+            version: "openradome test",
             started: 0,
             local: true,
         }))
@@ -385,7 +385,7 @@ impl StatusHandle {
                     "strong_signals": p.strong,
                     "samples_dropped": p.dropped,
                     "host_cpu_pct": s.and_then(|s| s.cpu_pct).map(round1),
-                    "rustadsb_cpu_pct_of_all_cores": s.and_then(|s| s.rustadsb_pct).map(round1),
+                    "openradome_cpu_pct_of_all_cores": s.and_then(|s| s.openradome_pct).map(round1),
                     "temperature_c": s.and_then(|s| s.temp_c).map(round1),
                 })
             })
@@ -393,7 +393,7 @@ impl StatusHandle {
         serde_json::json!({ "minutes": points.len(), "points": points })
     }
 
-    /// The host: CPU, load, memory, temperature, power, disk, Wi-Fi, uptime; and the rustadsb processes.
+    /// The host: CPU, load, memory, temperature, power, disk, Wi-Fi, uptime; and the openradome processes.
     pub fn system(&self) -> serde_json::Value {
         let st = self.state();
         let Some(sys) = &st.system else {
@@ -418,8 +418,8 @@ impl StatusHandle {
             })),
             "wifi": s.wifi.as_ref().map(|(iface, dbm)| serde_json::json!({ "interface": iface, "signal_dbm": dbm })),
             "host_uptime_s": s.uptime_s.map(|u| u as u64),
-            "rustadsb_processes": sys.rustadsb_count,
-            "rustadsb_cpu_pct_of_one_core_last_minute": sys.rustadsb_core_pct.map(round1),
+            "openradome_processes": sys.openradome_count,
+            "openradome_cpu_pct_of_one_core_last_minute": sys.openradome_core_pct.map(round1),
         })
     }
 
@@ -449,7 +449,7 @@ impl StatusHandle {
 /// The host's counters at the start of the current minute.
 struct MinuteStart {
     cpu_ticks: (u64, u64),
-    /// CPU ticks of each rustadsb process, by pid.
+    /// CPU ticks of each openradome process, by pid.
     procs: HashMap<u32, u64>,
     at: i64,
 }
@@ -466,7 +466,7 @@ fn spawn_sampler(rt: &Handle, shared: Arc<Shared>) {
             timer.tick().await;
             let scan = n % 6 == 0;
             let read = tokio::task::spawn_blocking(move || {
-                (sysstats::read(), scan.then(sysstats::rustadsb_ticks))
+                (sysstats::read(), scan.then(sysstats::openradome_ticks))
             })
             .await;
             let Ok((Some(sample), procs)) = read else {
@@ -486,11 +486,11 @@ fn spawn_sampler(rt: &Handle, shared: Arc<Shared>) {
                     // ticks are 10 ms
                     let core_pct = sysstats::ticks_between(&a.procs, &procs) as f64 * 10.0 * 100.0
                         / (now - a.at) as f64;
-                    live.rustadsb_core_pct = Some(core_pct);
+                    live.openradome_core_pct = Some(core_pct);
                     let point = SysPoint {
                         t: now,
                         cpu_pct: sysstats::busy_pct(a.cpu_ticks, sample.cpu_ticks),
-                        rustadsb_pct: Some(core_pct / sample.cores as f64),
+                        openradome_pct: Some(core_pct / sample.cores as f64),
                         temp_c: sample.temp_c,
                     };
                     st.sys_history.push_back(point);
@@ -499,7 +499,7 @@ fn spawn_sampler(rt: &Handle, shared: Arc<Shared>) {
                     }
                 }
                 let live = st.system.get_or_insert_with(SysLive::default);
-                live.rustadsb_count = procs.len();
+                live.openradome_count = procs.len();
                 anchor = Some(MinuteStart {
                     cpu_ticks: sample.cpu_ticks,
                     procs,
@@ -644,7 +644,7 @@ fn respond(request: &[u8], page: impl FnOnce() -> String) -> Vec<u8> {
 
 fn reply(status: &str, content_type: &str, body: &[u8], head_only: bool) -> Vec<u8> {
     let mut out = format!(
-        "HTTP/1.1 {status}\r\nServer: rustadsb\r\nContent-Type: {content_type}\r\n\
+        "HTTP/1.1 {status}\r\nServer: openradome\r\nContent-Type: {content_type}\r\n\
          Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:\r\n\
          X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
          Cache-Control: no-store\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
@@ -937,11 +937,11 @@ fn system_tiles(h: &mut String, sys: &SysLive) {
         ),
     ));
     h.push_str(&tile(
-        "rustadsb processes",
-        &sys.rustadsb_count.to_string(),
+        "openradome processes",
+        &sys.openradome_count.to_string(),
         &format!(
             "{} of one core together, last minute",
-            opt(sys.rustadsb_core_pct, " %")
+            opt(sys.openradome_core_pct, " %")
         ),
     ));
     let mb = |kb: u64| format!("{:.0}", kb as f64 / 1024.0);
@@ -1017,8 +1017,8 @@ fn render(p: &PageData) -> String {
         h,
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-         <meta http-equiv=\"refresh\" content=\"{REFRESH_S}\"><title>rustadsb status</title>\
-         <style>{STYLE}</style></head><body><main><header><h1>rustadsb</h1>\
+         <meta http-equiv=\"refresh\" content=\"{REFRESH_S}\"><title>OpenRadome status</title>\
+         <style>{STYLE}</style></head><body><main><header><h1>OpenRadome</h1>\
          <span class=\"sub\">{} · up {} · {} messages since start · refreshes every {REFRESH_S} s</span></header>",
         esc(p.version),
         duration(p.now - p.started),
@@ -1187,9 +1187,9 @@ fn render(p: &PageData) -> String {
                     values: sys(|x| x.cpu_pct),
                 },
                 Series {
-                    name: "rustadsb",
+                    name: "openradome",
                     class: "s2",
-                    values: sys(|x| x.rustadsb_pct),
+                    values: sys(|x| x.openradome_pct),
                 },
             ],
             true,
@@ -1253,8 +1253,8 @@ fn render(p: &PageData) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustadsb_core::demod::DemodStats;
-    use rustadsb_core::track::TrackStats;
+    use openradome_core::demod::DemodStats;
+    use openradome_core::track::TrackStats;
 
     fn bucket(start: i64, end: i64, messages: u64) -> StatsBlock {
         StatsBlock {
@@ -1420,7 +1420,7 @@ mod tests {
     #[test]
     fn the_page_escapes_what_it_shows() {
         let page = render(&PageData {
-            version: "rustadsb <test>",
+            version: "openradome <test>",
             started: 0,
             local: true,
             now: 120_000,
@@ -1441,13 +1441,13 @@ mod tests {
                     ..Sample::default()
                 },
                 cpu_pct: Some(41.0),
-                rustadsb_count: 20,
-                rustadsb_core_pct: Some(106.9),
+                openradome_count: 20,
+                openradome_core_pct: Some(106.9),
             }),
             sys_history: vec![SysPoint {
                 t: 60_000,
                 cpu_pct: Some(41.0),
-                rustadsb_pct: Some(26.7),
+                openradome_pct: Some(26.7),
                 temp_c: Some(41.2),
             }],
             clients: vec![ClientInfo {
@@ -1458,7 +1458,7 @@ mod tests {
             }],
         });
         assert!(page.contains("&lt;script&gt;") && !page.contains("<script"));
-        assert!(page.contains("rustadsb &lt;test&gt;"));
+        assert!(page.contains("openradome &lt;test&gt;"));
         assert!(page.contains("Connected to this decoder (1)"));
         assert!(page.contains("Signal and noise"));
         assert!(page.contains("<h2>System</h2>") && page.contains("CPU, all 4 cores"));

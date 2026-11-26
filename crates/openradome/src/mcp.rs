@@ -20,8 +20,8 @@ use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
-use rustadsb_core::api::{self, Snapshot};
-use rustadsb_core::track::Tracker;
+use openradome_core::api::{self, Snapshot};
+use openradome_core::track::Tracker;
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -85,7 +85,7 @@ fn read_token(file: &Path) -> Result<String, String> {
             && m.permissions().mode() & 0o004 != 0
         {
             eprintln!(
-                "rustadsb: warning: mcp token file {} can be read by every user (chmod o-r)",
+                "openradome: warning: mcp token file {} can be read by every user (chmod o-r)",
                 file.display()
             );
         }
@@ -188,7 +188,7 @@ impl Mcp {
             }
         });
         eprintln!(
-            "rustadsb: MCP server on {}://{addr}/mcp",
+            "openradome: MCP server on {}://{addr}/mcp",
             if settings.tls.is_some() {
                 "https"
             } else {
@@ -231,7 +231,7 @@ impl Mcp {
             .outline
             .lock()
             .unwrap_or_else(|e| e.into_inner()) =
-            t.outline.as_ref().map(rustadsb_core::json::outline_json);
+            t.outline.as_ref().map(openradome_core::json::outline_json);
     }
 }
 
@@ -305,13 +305,13 @@ impl Tls {
                 match load_tls(&self.cert, &self.key) {
                     Ok(a) => {
                         *cur = (a, c, k);
-                        eprintln!("rustadsb: MCP: TLS certificate reloaded");
+                        eprintln!("openradome: MCP: TLS certificate reloaded");
                     }
                     Err(e) => {
                         // keep serving the previous one; report this change once
                         cur.1 = c;
                         cur.2 = k;
-                        eprintln!("rustadsb: MCP: keeping the previous TLS certificate: {e}");
+                        eprintln!("openradome: MCP: keeping the previous TLS certificate: {e}");
                     }
                 }
             }
@@ -457,7 +457,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut io: S, shared: &Shared, pe
 
 fn encode(r: &Response) -> Vec<u8> {
     let mut out = format!(
-        "HTTP/1.1 {}\r\nServer: rustadsb\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\
+        "HTTP/1.1 {}\r\nServer: openradome\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n\
          X-Content-Type-Options: nosniff\r\n{}Connection: {}\r\nContent-Length: {}\r\n\r\n",
         r.status,
         r.extra,
@@ -506,13 +506,13 @@ async fn respond(req: &Request, shared: &Shared, peer: SocketAddr) -> Response {
                 .is_ok()
         {
             eprintln!(
-                "rustadsb: MCP: refused a request without the right token from {} ({n} so far)",
+                "openradome: MCP: refused a request without the right token from {} ({n} so far)",
                 peer.ip()
             );
         }
         return Response::empty(
             "401 Unauthorized",
-            "WWW-Authenticate: Bearer realm=\"rustadsb\"\r\n",
+            "WWW-Authenticate: Bearer realm=\"openradome\"\r\n",
         );
     }
     match req.method.as_str() {
@@ -588,8 +588,8 @@ fn initialize(params: &Value) -> Value {
     json!({
         "protocolVersion": version,
         "capabilities": { "tools": { "listChanged": false } },
-        "serverInfo": { "name": "rustadsb", "title": "rustadsb ADS-B receiver", "version": env!("CARGO_PKG_VERSION") },
-        "instructions": "Read-only view of a live rustadsb ADS-B receiver station. station_status, history, system \
+        "serverInfo": { "name": "openradome", "title": "OpenRadome ADS-B receiver", "version": env!("CARGO_PKG_VERSION") },
+        "instructions": "Read-only view of a live OpenRadome ADS-B receiver station. station_status, history, system \
             and connections tell how the station is doing (message rate, aircraft, range, signal and noise, dropped \
             samples, the computer's CPU, temperature, power and Wi-Fi, and the feed connections); aircraft_query \
             asks which aircraft it hears now; range_outline gives its reception range. Distances are km unless a \
@@ -630,7 +630,7 @@ fn tools() -> Vec<Value> {
         tool(
             "system",
             "Computer",
-            "The computer the decoder runs on: CPU (whole machine and all rustadsb processes), load, memory and \
+            "The computer the decoder runs on: CPU (whole machine and all openradome processes), load, memory and \
              swap, temperature, Raspberry Pi under-voltage (weak power supply), disk, Wi-Fi signal, uptime. Linux only.",
             json!({}),
         ),
@@ -939,7 +939,7 @@ mod tests {
         let (st, v) = post(&s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#).await;
         assert_eq!(st, "200 OK");
         assert_eq!(v["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(v["result"]["serverInfo"]["name"], "rustadsb");
+        assert_eq!(v["result"]["serverInfo"]["name"], "openradome");
         let (_, v) = post(&s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#).await;
         assert_eq!(
             v["result"]["protocolVersion"], PROTOCOL_VERSIONS[0],
@@ -986,7 +986,10 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"station_status"}}"#,
         )
         .await;
-        assert_eq!(v["result"]["structuredContent"]["version"], "rustadsb test");
+        assert_eq!(
+            v["result"]["structuredContent"]["version"],
+            "openradome test"
+        );
         let (_, v) = post(&s, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"aircraft_query","arguments":{"query":"closest"}}}"#).await;
         assert_eq!(v["result"]["isError"], false, "{v}");
         assert!(
@@ -1053,7 +1056,7 @@ mod tests {
 
     #[test]
     fn tokens() {
-        let dir = std::env::temp_dir().join(format!("rustadsb-mcp-token-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("openradome-mcp-token-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("t");
         std::fs::write(&f, format!("{TOKEN}\n")).unwrap();

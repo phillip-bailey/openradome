@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use rustadsb_core::api::{self, LIST_MAX, Snapshot};
-use rustadsb_core::track::Tracker;
+use openradome_core::api::{self, LIST_MAX, Snapshot};
+use openradome_core::track::Tracker;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Handle;
@@ -111,7 +111,7 @@ impl Api {
 
 fn status_reply(status: &str, keepalive: bool) -> Vec<u8> {
     format!(
-        "HTTP/1.1 {status}\r\nServer: rustadsb\r\nConnection: {}\r\nCache-control: no-store\r\nContent-length: 0\r\n\r\n",
+        "HTTP/1.1 {status}\r\nServer: openradome\r\nConnection: {}\r\nCache-control: no-store\r\nContent-length: 0\r\n\r\n",
         if keepalive { "keep-alive" } else { "close" }
     )
     .into_bytes()
@@ -214,7 +214,7 @@ fn handle(raw: &[u8], shared: &Shared) -> Outcome {
         String::new()
     };
     let mut reply = format!(
-        "HTTP/1.1 200 OK\r\nServer: rustadsb\r\n{version}Content-Type: {content_type}\r\nConnection: {}\r\nCache-Control: no-store\r\n{content_encoding}Content-Length: {}\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nServer: openradome\r\n{version}Content-Type: {content_type}\r\nConnection: {}\r\nCache-Control: no-store\r\n{content_encoding}Content-Length: {}\r\n\r\n",
         if keepalive { "keep-alive" } else { "close" },
         body.len()
     )
@@ -268,7 +268,7 @@ mod tests {
                 flags: 1,
             })),
             shutting_down: AtomicBool::new(false),
-            version: "rustadsb test",
+            version: "openradome test",
         }
     }
 
@@ -318,7 +318,7 @@ mod tests {
         let (r, _) = run("GET /re-api/?All&Include_Version HTTP/1.1\r\n\r\n");
         assert!(
             r.starts_with(
-                "HTTP/1.1 200 OK\r\nServer: rustadsb\r\nreadsb_version: rustadsb test\r\n"
+                "HTTP/1.1 200 OK\r\nServer: openradome\r\nreadsb_version: openradome test\r\n"
             ),
             "{r}"
         );

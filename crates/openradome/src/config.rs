@@ -1,6 +1,6 @@
 //! `--config <file.toml>`: options from a TOML file, and `--print-config` to write one.
 //!
-//! Each key is a long option's name, as `rustadsb --help` shows it, without the dashes (`net-bo-port`;
+//! Each key is a long option's name, as `openradome --help` shows it, without the dashes (`net-bo-port`;
 //! `net_bo_port` works too). A value becomes the option's argument; `true` turns an on/off option on and
 //! `false` leaves it off; an array gives the option once per element (`net-connector`). The file's options
 //! go before the command line's, and a single-value option given twice keeps the last value, so the
@@ -32,7 +32,7 @@ enum Kind {
     Value,
 }
 
-/// Every long option rustadsb knows, by name (aliases included).
+/// Every long option openradome knows, by name (aliases included).
 fn options() -> BTreeMap<String, Kind> {
     let mut out = BTreeMap::new();
     for arg in Cli::command().get_arguments() {
@@ -89,7 +89,7 @@ pub fn file_args(text: &str) -> Result<Vec<String>, String> {
         let Some((name, kind)) =
             option_for(key, &known).filter(|(n, _)| !NOT_IN_FILE.contains(&n.as_str()))
         else {
-            return Err(format!("unknown option {key:?} (see rustadsb --help)"));
+            return Err(format!("unknown option {key:?} (see openradome --help)"));
         };
         let flag = format!("--{name}");
         match (kind, value) {
@@ -209,7 +209,7 @@ pub fn to_toml(args: &[String]) -> Result<String, String> {
         }
     }
     let mut out = String::from(
-        "# rustadsb options: one key per long option, as in rustadsb --help (rustadsb --config <this file>)\n",
+        "# openradome options: one key per long option, as in openradome --help (openradome --config <this file>)\n",
     );
     for name in order {
         let vals = &values[&name];
@@ -286,18 +286,18 @@ mod tests {
 
     #[test]
     fn the_command_line_overrides_the_file() {
-        let dir = std::env::temp_dir().join(format!("rustadsb-config-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("openradome-config-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("r.toml");
         std::fs::write(&file, "gain = 40.2\nlat = 51.5\nquiet = true\n").unwrap();
         let path = file.to_str().unwrap();
-        let expanded = expand(args(&["rustadsb", "--config", path, "--gain", "49.6"])).unwrap();
+        let expanded = expand(args(&["openradome", "--config", path, "--gain", "49.6"])).unwrap();
         let cli = Cli::try_parse_from(&expanded).unwrap();
         assert_eq!(cli.gain, Some(49.6), "the command line wins");
         assert_eq!(cli.lat, Some(51.5));
         assert!(cli.quiet);
         let e = expand(args(&[
-            "rustadsb",
+            "openradome",
             &format!("--config={}", dir.join("none.toml").display()),
         ]));
         assert!(e.unwrap_err().contains("none.toml"));
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn print_config_round_trips() {
         let given = args(&[
-            "rustadsb",
+            "openradome",
             "--device-type",
             "rtlsdr",
             "--gain",
@@ -329,7 +329,7 @@ mod tests {
             "a,1,beast_in",
             "--net-connector=b,2,raw_in",
             "--write-json",
-            "/run/rustadsb",
+            "/run/openradome",
             "--quiet",
             "--gain",
             "40.2",
@@ -350,7 +350,7 @@ mod tests {
             "{text}"
         );
         let back = file_args(&text).unwrap();
-        let a = Cli::try_parse_from(std::iter::once("rustadsb".to_string()).chain(back)).unwrap();
+        let a = Cli::try_parse_from(std::iter::once("openradome".to_string()).chain(back)).unwrap();
         let b = Cli::try_parse_from(&given[..given.len() - 1]).unwrap();
         assert_eq!(format!("{a:?}"), format!("{b:?}"));
     }

@@ -3,7 +3,7 @@
 #   export PATH=/opt/homebrew/opt/rustup/bin:$$PATH
 # Pi login. Directory is relative to its home. glibc: the Pi has 2.41, building against older is fine.
 PI     ?= pi@raspberrypi.local
-PI_DIR ?= rustadsb
+PI_DIR ?= openradome
 TARGET ?= armv7-unknown-linux-gnueabihf
 GLIBC  ?= 2.31
 
@@ -20,4 +20,4 @@ pi:
 
 push: pi
 	ssh $(PI) 'mkdir -p $(PI_DIR)'
-	rsync -avz --progress target/$(TARGET)/release/rustadsb $(PI):$(PI_DIR)/rustadsb
+	rsync -avz --progress target/$(TARGET)/release/openradome $(PI):$(PI_DIR)/openradome

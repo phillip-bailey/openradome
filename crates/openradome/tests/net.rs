@@ -62,10 +62,10 @@ const IDENT: &str = "8D4840D6202CC371C32CE0576098";
 #[test]
 fn raw_in_to_all_outputs_and_json() {
     let _serial = serial();
-    let dir = std::env::temp_dir().join(format!("rustadsb-net-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("openradome-net-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let [ri, bo, ro, sbs] = free_ports();
-    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let child = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args([
             "--net-bind-address",
             "127.0.0.1",
@@ -146,7 +146,7 @@ fn hex(s: &str) -> Vec<u8> {
 fn beast_in_is_decoded_and_forwarded() {
     let _serial = serial();
     let [bi, ro] = free_ports();
-    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let child = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args([
             "--net-bind-address",
             "127.0.0.1",
@@ -183,7 +183,7 @@ fn listen_port_in_use_is_an_error() {
     let _serial = serial();
     let l = TcpListener::bind("0.0.0.0:0").unwrap();
     let port = l.local_addr().unwrap().port();
-    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args(["--net-ro-port", &port.to_string()])
         .output()
         .unwrap();
@@ -194,7 +194,7 @@ fn listen_port_in_use_is_an_error() {
 #[test]
 fn bad_connector_is_an_error() {
     let _serial = serial();
-    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args(["--net-connector", "127.0.0.1,1,telnet"])
         .output()
         .unwrap();
@@ -215,7 +215,7 @@ fn http_get(port: u16, path: &str) -> String {
 fn dashboard_shows_the_open_connections() {
     let _serial = serial();
     let [bo, dash] = free_ports();
-    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let child = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args([
             "--net-bind-address",
             "127.0.0.1",
@@ -272,11 +272,11 @@ fn mcp_answers_with_the_token_only() {
     let _serial = serial();
     let [bo, mcp] = free_ports();
     let token = "f00dfeedf00dfeedf00dfeedf00dfeed";
-    let dir = std::env::temp_dir().join(format!("rustadsb-mcp-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("openradome-mcp-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let token_file = dir.join("token");
     std::fs::write(&token_file, format!("{token}\n")).unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let child = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args([
             "--net-bind-address",
             "127.0.0.1",
@@ -303,7 +303,7 @@ fn mcp_answers_with_the_token_only() {
     );
     let ok = mcp_post(mcp, Some(token), init);
     assert!(
-        ok.starts_with("HTTP/1.1 200 OK") && ok.contains(r#""name":"rustadsb""#),
+        ok.starts_with("HTTP/1.1 200 OK") && ok.contains(r#""name":"openradome""#),
         "{ok}"
     );
     let end = Instant::now() + Duration::from_secs(5);
@@ -324,7 +324,7 @@ fn mcp_answers_with_the_token_only() {
 
 #[test]
 fn mcp_needs_a_token_file() {
-    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args(["--net-only", "--net", "--mcp-port", "0"])
         .output()
         .unwrap();

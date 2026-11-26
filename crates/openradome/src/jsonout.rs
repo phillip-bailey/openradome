@@ -4,12 +4,12 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-use rustadsb_core::bincraft;
-use rustadsb_core::json::{self, Cumulative, ReceiverInfo, StatsRecorder};
-use rustadsb_core::pipeline::IqPipeline;
-use rustadsb_core::track::Tracker;
+use openradome_core::bincraft;
+use openradome_core::json::{self, Cumulative, ReceiverInfo, StatsRecorder};
+use openradome_core::pipeline::IqPipeline;
+use openradome_core::track::Tracker;
 
-pub const VERSION_STRING: &str = concat!("rustadsb ", env!("CARGO_PKG_VERSION"));
+pub const VERSION_STRING: &str = concat!("openradome ", env!("CARGO_PKG_VERSION"));
 
 /// Which files `--write-json` produces besides the always-written `aircraft.json` family.
 #[derive(Debug, Clone, Default)]
@@ -59,7 +59,7 @@ pub struct JsonWriter {
 const OUTLINE_EVERY_MS: i64 = 15_000;
 
 /// Upstream's command file in the JSON directory: a script writes one command into it, the
-/// decoder reads and deletes it (`echo resetRangeOutline > /run/rustadsb/setGain`).
+/// decoder reads and deletes it (`echo resetRangeOutline > /run/openradome/setGain`).
 pub const COMMAND_FILE: &str = "setGain";
 /// How often the command file is looked for.
 const COMMAND_EVERY_MS: i64 = 1_000;
@@ -238,7 +238,7 @@ impl JsonWriter {
             }
             Command::Problem(p) => {
                 if self.command_problem.as_ref() != Some(&p) {
-                    eprintln!("rustadsb: {p}");
+                    eprintln!("openradome: {p}");
                     self.command_problem = Some(p);
                 }
                 None
@@ -318,7 +318,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("rustadsb-cmd-{name}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("openradome-cmd-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

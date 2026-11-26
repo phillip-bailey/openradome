@@ -7,8 +7,8 @@
 use std::fmt::Write as _;
 use std::io::{self, Write};
 
-use rustadsb_core::mode_s::{AirGround, NON_ICAO_ADDRESS};
-use rustadsb_core::track::{Aircraft, Tracker};
+use openradome_core::mode_s::{AirGround, NON_ICAO_ADDRESS};
+use openradome_core::track::{Aircraft, Tracker};
 
 /// Upstream's `MODES_INTERACTIVE_REFRESH_TIME`.
 const REFRESH_MS: i64 = 500;
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn header_has_the_upstream_columns() {
-        let t = Tracker::new(rustadsb_core::track::TrackerConfig::default());
+        let t = Tracker::new(openradome_core::track::TrackerConfig::default());
         let ui = Interactive::new(DEFAULT_TTL_MS, false, false, false);
         let s = ui.render(0, &t);
         assert!(s.contains(

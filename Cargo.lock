@@ -424,6 +424,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "openradome"
+version = "0.6.0"
+dependencies = [
+ "clap",
+ "flate2",
+ "openradome-core",
+ "rtlsdr-nusb",
+ "rustix",
+ "rustls",
+ "rustls-pki-types",
+ "ruzstd",
+ "serde_json",
+ "socket2",
+ "tokio",
+ "tokio-rustls",
+ "toml",
+]
+
+[[package]]
+name = "openradome-core"
+version = "0.6.0"
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -478,29 +501,6 @@ dependencies = [
  "nusb",
  "wasm-bindgen-futures",
 ]
-
-[[package]]
-name = "rustadsb"
-version = "0.5.0"
-dependencies = [
- "clap",
- "flate2",
- "rtlsdr-nusb",
- "rustadsb-core",
- "rustix",
- "rustls",
- "rustls-pki-types",
- "ruzstd",
- "serde_json",
- "socket2",
- "tokio",
- "tokio-rustls",
- "toml",
-]
-
-[[package]]
-name = "rustadsb-core"
-version = "0.5.0"
 
 [[package]]
 name = "rustix"

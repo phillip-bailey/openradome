@@ -22,11 +22,11 @@ use std::time::{Duration, Instant};
 use clap::Parser;
 use cli::{Cli, DeviceType};
 use engine::Engine;
-use rustadsb_core::convert::InputFormat;
-use rustadsb_core::demod::{Demodulator, SAMPLE_RATE};
-use rustadsb_core::mode_s::Decoder;
-use rustadsb_core::pipeline::IqPipeline;
-use rustadsb_core::track::{Tracker, TrackerConfig};
+use openradome_core::convert::InputFormat;
+use openradome_core::demod::{Demodulator, SAMPLE_RATE};
+use openradome_core::mode_s::Decoder;
+use openradome_core::pipeline::IqPipeline;
+use openradome_core::track::{Tracker, TrackerConfig};
 
 /// Upstream's `viewadsb` mode: run under that name, the program is a terminal viewer that connects
 /// to a decoder's Beast output (127.0.0.1:30005 unless told otherwise).
@@ -61,7 +61,7 @@ fn main() -> ExitCode {
     let args = match config::expand(viewadsb_args(std::env::args().collect())) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("rustadsb: {e}");
+            eprintln!("openradome: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -73,7 +73,7 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("rustadsb: --print-config: {e}");
+                eprintln!("openradome: --print-config: {e}");
                 ExitCode::FAILURE
             }
         };
@@ -89,7 +89,7 @@ fn main() -> ExitCode {
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("rustadsb: {e}");
+            eprintln!("openradome: {e}");
             ExitCode::FAILURE
         }
     }
@@ -102,7 +102,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         (None, None) => DeviceType::None,
     };
     if cli.json_location_accuracy != 2 {
-        eprintln!("rustadsb: --json-location-accuracy other than 2 is not implemented; using 2");
+        eprintln!("openradome: --json-location-accuracy other than 2 is not implemented; using 2");
     }
     if device == DeviceType::None && !cli.network_enabled() {
         return Err("no input: give --ifile <path>, or enable networking with --net".into());
@@ -212,7 +212,7 @@ fn run(cli: &Cli) -> Result<(), String> {
         );
     }
     if cli.write_json.is_some() || cli.dashboard_port.is_some() {
-        engine.recorder = Some(rustadsb_core::json::StatsRecorder::new(startup));
+        engine.recorder = Some(openradome_core::json::StatsRecorder::new(startup));
     }
     // the dashboard's figures are collected for its page and for the MCP server
     if cli.dashboard_port.is_some() || cli.mcp_port.is_some() {
@@ -354,7 +354,7 @@ fn net_config(cli: &Cli) -> Result<net::NetConfig, String> {
                 Ok(u) => Some(u.trim().to_string()),
                 Err(e) => {
                     eprintln!(
-                        "rustadsb: --uuid-file {} could not be read: {e}",
+                        "openradome: --uuid-file {} could not be read: {e}",
                         path.display()
                     );
                     None
@@ -373,7 +373,7 @@ fn open_state(cli: &Cli, tracker: &mut Tracker) -> Option<state::StateWriter> {
     let dir = cli.write_state.as_ref()?;
     let Some(outline) = tracker.outline.as_mut() else {
         eprintln!(
-            "rustadsb: --write-state: nothing to keep; the range outline needs --write-json and \
+            "openradome: --write-state: nothing to keep; the range outline needs --write-json and \
              a receiver location (--lat/--lon)"
         );
         return None;
@@ -386,7 +386,7 @@ fn open_state(cli: &Cli, tracker: &mut Tracker) -> Option<state::StateWriter> {
         }
         Err(e) => {
             eprintln!(
-                "rustadsb: --write-state: unable to create state directory ({}): {e}",
+                "openradome: --write-state: unable to create state directory ({}): {e}",
                 dir.display()
             );
             None
@@ -395,11 +395,11 @@ fn open_state(cli: &Cli, tracker: &mut Tracker) -> Option<state::StateWriter> {
 }
 
 /// The range outline for `--range-outline-hours` (upstream's minimum is one minute).
-fn upstream_outline(hours: f64) -> rustadsb_core::track::RangeOutline {
+fn upstream_outline(hours: f64) -> openradome_core::track::RangeOutline {
     if hours * 60.0 < 1.0 {
-        eprintln!("rustadsb: --range-outline-hours too short, using one minute");
+        eprintln!("openradome: --range-outline-hours too short, using one minute");
     }
-    rustadsb_core::track::RangeOutline::new((hours * 3_600_000.0) as i64)
+    openradome_core::track::RangeOutline::new((hours * 3_600_000.0) as i64)
 }
 
 fn expired(deadline: Option<Instant>) -> bool {
@@ -556,7 +556,7 @@ fn run_rtlsdr(
     match (result, finished) {
         (Err(e), Err(f)) => {
             // keep the input error, which says why we stopped; still mention the other
-            eprintln!("rustadsb: {f}");
+            eprintln!("openradome: {f}");
             Err(e)
         }
         (Err(e), _) | (Ok(()), Err(e)) => Err(e),

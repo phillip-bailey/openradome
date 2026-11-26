@@ -23,8 +23,8 @@
 
 use std::io::{BufRead, IsTerminal, Write};
 
-use rustadsb_core::crc::checksum;
-use rustadsb_core::synth::{modulate, to_uc8};
+use openradome_core::crc::checksum;
+use openradome_core::synth::{modulate, to_uc8};
 
 struct Rng(u64);
 impl Rng {
@@ -173,7 +173,7 @@ fn cpr_encode(lat: f64, lon: f64, odd: bool) -> (u32, u32) {
     let dlat = 360.0 / (60 - i) as f64;
     let yz = (131072.0 * (lat.rem_euclid(dlat) / dlat) + 0.5).floor();
     let rlat = dlat * (yz / 131072.0 + (lat / dlat).floor());
-    let nl = (rustadsb_core::cpr::nl(rlat) - i).max(1);
+    let nl = (openradome_core::cpr::nl(rlat) - i).max(1);
     let dlon = 360.0 / nl as f64;
     let xz = (131072.0 * (lon.rem_euclid(dlon) / dlon) + 0.5).floor();
     ((yz as u32) & 0x1FFFF, (xz as u32) & 0x1FFFF)
@@ -201,7 +201,7 @@ fn cpr_encode_surface(lat: f64, lon: f64, odd: bool) -> (u32, u32) {
     let dlat = 90.0 / (60 - i) as f64;
     let yz = (131072.0 * (lat.rem_euclid(dlat) / dlat) + 0.5).floor();
     let rlat = dlat * (yz / 131072.0 + (lat / dlat).floor());
-    let nl = (rustadsb_core::cpr::nl(rlat) - i).max(1);
+    let nl = (openradome_core::cpr::nl(rlat) - i).max(1);
     let dlon = 90.0 / nl as f64;
     let xz = (131072.0 * (lon.rem_euclid(dlon) / dlon) + 0.5).floor();
     ((yz as u32) & 0x1FFFF, (xz as u32) & 0x1FFFF)
@@ -452,7 +452,7 @@ fn main() {
     if flights > 0 {
         let events = simulate(&mut rng, flights, seconds, ground, glitch);
         let total =
-            (seconds as usize + 1) * 2_400_000 + rustadsb_core::demod::TRAILING_SAMPLES + 4000;
+            (seconds as usize + 1) * 2_400_000 + openradome_core::demod::TRAILING_SAMPLES + 4000;
         let mut mags: Vec<u16> = vec![0; total];
         let mut truth = String::new();
         for (t_ms, frame) in &events {
@@ -467,7 +467,7 @@ fn main() {
             let start = 2000 + (*t_ms as usize) * 2400 + rng.below(2400) as usize / 8;
             let amp = (min_amp + rng.below(max_amp - min_amp + 1)) as f64;
             let burst = modulate(frame, 0, rng.below(5) as usize, amp);
-            let keep = burst.len() - 50 - rustadsb_core::demod::TRAILING_SAMPLES;
+            let keep = burst.len() - 50 - openradome_core::demod::TRAILING_SAMPLES;
             for (d, s) in mags[start..start + keep].iter_mut().zip(&burst[..keep]) {
                 *d = d.saturating_add(*s);
             }
@@ -534,7 +534,7 @@ fn main() {
         let offset = rng.below(5) as usize;
         let amp = (min_amp + rng.below(max_amp - min_amp + 1)) as f64;
         let burst = modulate(&f, 0, offset, amp);
-        let keep = burst.len() - 50 - rustadsb_core::demod::TRAILING_SAMPLES;
+        let keep = burst.len() - 50 - openradome_core::demod::TRAILING_SAMPLES;
 
         let start = if i > 0 && rng.pct(overlap) {
             last_start + rng.below(300) as usize
@@ -555,7 +555,7 @@ fn main() {
     }
     mags.extend(std::iter::repeat_n(
         0u16,
-        2000 + rustadsb_core::demod::TRAILING_SAMPLES,
+        2000 + openradome_core::demod::TRAILING_SAMPLES,
     ));
     if noise > 0 {
         for m in &mut mags {

@@ -11,7 +11,7 @@ use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rustadsb_core::beast::{BeastFrame, BeastParser, parse_raw_line};
+use openradome_core::beast::{BeastFrame, BeastParser, parse_raw_line};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::Handle;

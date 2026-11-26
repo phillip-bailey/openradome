@@ -1,10 +1,10 @@
-rustadsb
+OpenRadome
 Copyright (C) 2026 Phillip and contributors
 
-rustadsb is a Rust reimplementation of readsb, the ADS-B and Mode S decoder maintained by
+OpenRadome is a Rust reimplementation of readsb, the ADS-B and Mode S decoder maintained by
 Matthias Wirth (wiedehopf): https://github.com/wiedehopf/readsb
 
-rustadsb is free software: you can redistribute it and/or modify it under the terms of the GNU
+OpenRadome is free software: you can redistribute it and/or modify it under the terms of the GNU
 General Public License as published by the Free Software Foundation, either version 3 of the License,
 or (at your option) any later version. See COPYING for the full text.
 
@@ -16,7 +16,7 @@ that work belongs to its authors, credited here as readsb credits them.
 Original authors
 ================
 
-As listed in readsb's LICENSE file and in the copyright lines of the readsb source files rustadsb
+As listed in readsb's LICENSE file and in the copyright lines of the readsb source files OpenRadome
 ports (demod_2400.c, mode_s.c, comm_b.c, crc.c, cpr.c, mode_ac.c, track.c, net_io.c, json_out.c,
 stats.c, convert.c, icao_filter.c, interactive.c, sdr_ifile.c, sdr_rtlsdr.c, aircraft.c, api.c,
 globe_index.c, geomag.c, readsb.c):
@@ -38,7 +38,7 @@ World Magnetic Model (WMM2025): coefficients and the geomagnetic code from the U
 and Atmospheric Administration (NOAA) and the National Geospatial-Intelligence Agency; in the public
 domain in the United States.
 
-rustadsb's dependencies (tokio, clap, flate2, ruzstd, nusb, rtlsdr-nusb, socket2, serde_json, toml,
+OpenRadome's dependencies (tokio, clap, flate2, ruzstd, nusb, rtlsdr-nusb, socket2, serde_json, toml,
 rustls, tokio-rustls and the crates they pull in) are under the MIT, Apache-2.0 and/or ISC licences; ring
 (rustls's cryptography) is under Apache-2.0 AND ISC. See each crate's own licence.
 

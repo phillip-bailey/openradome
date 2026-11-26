@@ -1,5 +1,5 @@
 //! The host's own figures for the dashboard: CPU, load, memory, temperature, under-voltage, disk,
-//! Wi-Fi and the CPU used by every rustadsb process. Read from Linux's `/proc` and `/sys` (and the
+//! Wi-Fi and the CPU used by every openradome process. Read from Linux's `/proc` and `/sys` (and the
 //! root filesystem's statistics); elsewhere [`read`] returns `None` and the dashboard leaves the
 //! section out. The parsers take the files' text, so they are tested with real samples.
 
@@ -168,9 +168,9 @@ fn disk(path: &str) -> Option<(u64, u64, u64)> {
     Some((used, s.f_bavail * s.f_frsize, s.f_blocks * s.f_frsize))
 }
 
-/// CPU time of every process named `rustadsb`, by pid, in ticks.
+/// CPU time of every process named `openradome` (or `rustadsb`, the old name), by pid, in ticks.
 #[cfg(target_os = "linux")]
-pub fn rustadsb_ticks() -> HashMap<u32, u64> {
+pub fn openradome_ticks() -> HashMap<u32, u64> {
     let mut out = HashMap::new();
     let Ok(dir) = std::fs::read_dir("/proc") else {
         return out;
@@ -186,7 +186,8 @@ pub fn rustadsb_ticks() -> HashMap<u32, u64> {
         let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
             continue; // gone since the listing
         };
-        if let Some(("rustadsb", ticks)) = parse_proc_stat(&stat) {
+        // feed clients started through the old name (a /usr/local/bin/rustadsb link) show as rustadsb
+        if let Some(("openradome" | "rustadsb", ticks)) = parse_proc_stat(&stat) {
             out.insert(pid, ticks);
         }
     }
@@ -194,7 +195,7 @@ pub fn rustadsb_ticks() -> HashMap<u32, u64> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn rustadsb_ticks() -> HashMap<u32, u64> {
+pub fn openradome_ticks() -> HashMap<u32, u64> {
     HashMap::new()
 }
 
@@ -252,8 +253,8 @@ mod tests {
 
     #[test]
     fn process_stat() {
-        let s = "8255 (rustadsb) S 1 8255 8255 0 -1 4194560 1234 0 0 0 290000 193000 0 0 15 -5 5 0 100 25976832 2760 4294967295";
-        assert_eq!(parse_proc_stat(s), Some(("rustadsb", 483000)));
+        let s = "8255 (openradome) S 1 8255 8255 0 -1 4194560 1234 0 0 0 290000 193000 0 0 15 -5 5 0 100 25976832 2760 4294967295";
+        assert_eq!(parse_proc_stat(s), Some(("openradome", 483000)));
         let odd = "42 (a b) c)) R 1 2 3 4 5 6 7 8 9 10 70 30 0";
         assert_eq!(parse_proc_stat(odd), Some(("a b) c)", 100)));
         let before = HashMap::from([(1, 100), (2, 50), (3, 10)]);

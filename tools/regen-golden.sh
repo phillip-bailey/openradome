@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Regenerate the golden files in testdata/ from upstream (Docker image
-# rustadsb-upstream, built from tools/upstream). Only needed when a capture or the
+# openradome-upstream, built from tools/upstream). Only needed when a capture or the
 # pinned upstream commit changes.
 #
-# Captures, and the flags both programs get for them (crates/rustadsb/tests/golden.rs uses
+# Captures, and the flags both programs get for them (crates/openradome/tests/golden.rs uses
 # the same list):
 #   synth_uc8.bin  synthetic frames from examples/synth_iq.rs; default flags
 #   flights_uc8.bin  3 s of simulated traffic from examples/synth_iq.rs:
@@ -13,7 +13,7 @@ here=$(cd "$(dirname "$0")/.." && pwd)
 cd "$here/testdata"
 
 # upstream exits non-zero at end of file ("Abnormal exit"), which is expected here
-up() { docker run --rm -v "$PWD":/data rustadsb-upstream --device-type ifile "$@" 2>/dev/null || true; }
+up() { docker run --rm -v "$PWD":/data openradome-upstream --device-type ifile "$@" 2>/dev/null || true; }
 
 # Statistics: from "Local receiver:" to the aircraft-track counts (CPU timings excluded),
 # the same range tools/compare.sh diffs.

@@ -1,9 +1,9 @@
 //! State kept across restarts (`--write-state <dir>`), as upstream: the range outline in
-//! `<dir>/internal_state/rangeDirs.gz`, in upstream's format, so rustadsb and upstream can each
+//! `<dir>/internal_state/rangeDirs.gz`, in upstream's format, so openradome and upstream can each
 //! pick up the other's file.
 //!
 //! Upstream also saves its aircraft there (`blob_*.zstl`, dumps of its C structures, used for
-//! its trace history). rustadsb keeps no traces and rebuilds its aircraft table from live
+//! its trace history). openradome keeps no traces and rebuilds its aircraft table from live
 //! messages within seconds, so it neither reads nor writes those.
 
 use std::fs;
@@ -14,7 +14,7 @@ use std::time::UNIX_EPOCH;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use rustadsb_core::track::RangeOutline;
+use openradome_core::track::RangeOutline;
 
 const RANGE_DIRS: &str = "rangeDirs.gz";
 /// How often the outline is saved: upstream's 5 minutes, or 6 hours with
@@ -57,7 +57,7 @@ impl StateWriter {
                 .map_or(now, |d| d.as_millis() as i64),
             Err(e) if e.kind() == io::ErrorKind::NotFound => return,
             Err(e) => {
-                eprintln!("rustadsb: state: {}: {e}", path.display());
+                eprintln!("openradome: state: {}: {e}", path.display());
                 return;
             }
         };
@@ -73,7 +73,7 @@ impl StateWriter {
                 .map_err(str::to_string)
         }) {
             Ok(()) => eprintln!("actual range outline, read bytes: {}", bytes.len()),
-            Err(e) => eprintln!("rustadsb: state: {} not used: {e}", path.display()),
+            Err(e) => eprintln!("openradome: state: {} not used: {e}", path.display()),
         }
     }
 
@@ -95,7 +95,7 @@ impl StateWriter {
     /// Save now (at exit), reporting a failure.
     pub fn save_or_report(&self, outline: &RangeOutline) {
         if let Err(e) = self.save(outline) {
-            eprintln!("rustadsb: state: saving the range outline failed: {e}");
+            eprintln!("openradome: state: saving the range outline failed: {e}");
         }
     }
 
@@ -113,10 +113,11 @@ impl StateWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustadsb_core::track::RANGEDIRS_IVALS;
+    use openradome_core::track::RANGEDIRS_IVALS;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("rustadsb-state-{name}-{}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("openradome-state-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         d
     }

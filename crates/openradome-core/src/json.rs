@@ -888,7 +888,7 @@ mod tests {
         let j = receiver_json(&ReceiverInfo {
             refresh_ms: 1000,
             location: Some((52.0, 4.0)),
-            version: "rustadsb 0.1.0".into(),
+            version: "openradome 0.1.0".into(),
             outline: true,
             reapi: false,
             trace_interval_s: None,

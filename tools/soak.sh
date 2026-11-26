@@ -1,14 +1,14 @@
 #!/bin/bash
-# Soak-test logger for the rustadsb service: one CSV line a minute.
+# Soak-test logger for the openradome service: one CSV line a minute.
 #
-#   tools/soak.sh [DIR] [JSON_DIR]      (defaults: ~/soak, /run/rustadsb)
+#   tools/soak.sh [DIR] [JSON_DIR]      (defaults: ~/soak, /run/openradome)
 #
 # Run it detached and time-bounded, e.g. on the Pi:
 #   setsid nohup timeout 25h bash ~/soak/soak.sh ~/soak >~/soak/soak.log 2>&1 </dev/null &
 # Read it out with tools/soak-report.py DIR/soak.csv.
 set -u
 DIR=${1:-$HOME/soak}
-JSON=${2:-/run/rustadsb}
+JSON=${2:-/run/openradome}
 mkdir -p "$DIR"
 OUT=$DIR/soak.csv
 [ -s "$OUT" ] || echo "time,active,restarts,pid,cpu_pct,rss_kb,threads,load1,temp_c,msgs_1min,modes_1min,accepted_1min,dropped_1min,aircraft,with_pos,max_range_nm,noise_db,signal_db" >"$OUT"
@@ -20,9 +20,9 @@ prev_t=0
 
 while true; do
   now=$(date +%s)
-  active=$(systemctl is-active rustadsb 2>/dev/null)
-  restarts=$(systemctl show rustadsb -p NRestarts --value 2>/dev/null)
-  pid=$(systemctl show rustadsb -p MainPID --value 2>/dev/null)
+  active=$(systemctl is-active openradome 2>/dev/null)
+  restarts=$(systemctl show openradome -p NRestarts --value 2>/dev/null)
+  pid=$(systemctl show openradome -p MainPID --value 2>/dev/null)
   cpu=""
   rss=""
   thr=""

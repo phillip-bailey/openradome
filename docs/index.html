@@ -211,7 +211,7 @@ footer .wrap { display: grid; gap: 8px; }
       <h2>Ask your station</h2>
       <p class="sub">OpenRadome speaks the Model Context Protocol, so an AI assistant can read your station's live figures and
         explain them in plain language. Add it to Claude Code in one command:</p>
-      <pre><code>claude mcp add --transport http radome \
+      <pre><code>claude mcp add --transport http openradome \
   https://&lt;your-pi&gt;:8091/mcp \
   --header "Authorization: Bearer &lt;token&gt;"</code></pre>
       <p class="sub" style="margin:22px 0 10px">Then ask, for example:</p>
@@ -226,7 +226,7 @@ footer .wrap { display: grid; gap: 8px; }
     </div>
     <div class="chat" aria-label="Example conversation">
       <div class="msg you">How's my ADS-B station doing?</div>
-      <div class="tool">⏺ Called radome: station_status, system, connections</div>
+      <div class="tool">⏺ Called openradome: station_status, system, connections</div>
       <div class="msg ai">Healthy. About 77 messages a second from 8 aircraft, the furthest 73 km away (132 km since
         start). Signal −17 dBFS against noise −41: a good margin, and no strong signals, so the gain is right.
         No dropped samples.
@@ -237,7 +237,7 @@ footer .wrap { display: grid; gap: 8px; }
         </ul>
       </div>
       <div class="msg you">What's the closest aircraft right now?</div>
-      <div class="tool">⏺ Called radome: aircraft_query (closest)</div>
+      <div class="tool">⏺ Called openradome: aircraft_query (closest)</div>
       <div class="msg ai">FDX5201, 16.7 nm away at 24,525 ft.</div>
     </div>
   </div>
@@ -255,9 +255,9 @@ footer .wrap { display: grid; gap: 8px; }
     </div>
     <ol class="steps">
       <li>Picks the right build for your CPU and checks it against the release's SHA-256 checksums.</li>
-      <li>Creates a <code>radome</code> system user, gives it the dongle, and keeps the TV driver off it.</li>
-      <li>Writes a fully commented <code>/etc/radome/radome.toml</code> with your choices filled in.</li>
-      <li>Starts the service: JSON in <code>/run/radome</code>, Beast out on port 30005 for your feeders and maps.</li>
+      <li>Creates a <code>openradome</code> system user, gives it the dongle, and keeps the TV driver off it.</li>
+      <li>Writes a fully commented <code>/etc/openradome/openradome.toml</code> with your choices filled in.</li>
+      <li>Starts the service: JSON in <code>/run/openradome</code>, Beast out on port 30005 for your feeders and maps.</li>
     </ol>
   </div>
 </section>

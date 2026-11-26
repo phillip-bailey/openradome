@@ -4,13 +4,13 @@
 use std::io::{self, Write};
 use std::sync::mpsc::Receiver;
 
-use rustadsb_core::beast::message_from_wire;
-use rustadsb_core::json::StatsRecorder;
-use rustadsb_core::mode_s::{DFTYPE_MODEAC, DataSource, ModesMessage};
-use rustadsb_core::output::{beast_frame, raw_line};
-use rustadsb_core::pipeline::IqPipeline;
-use rustadsb_core::sbs::{SbsOptions, sbs_line};
-use rustadsb_core::track::Tracker;
+use openradome_core::beast::message_from_wire;
+use openradome_core::json::StatsRecorder;
+use openradome_core::mode_s::{DFTYPE_MODEAC, DataSource, ModesMessage};
+use openradome_core::output::{beast_frame, raw_line};
+use openradome_core::pipeline::IqPipeline;
+use openradome_core::sbs::{SbsOptions, sbs_line};
+use openradome_core::track::Tracker;
 
 use crate::apiserver::Api;
 use crate::cli::Cli;
@@ -159,7 +159,7 @@ impl<'a> Engine<'a> {
         writeln!(
             self.out,
             "hex: {}{:06x}  CRC: {:06x} fixed bits: {} decode: {}",
-            if mm.addr & rustadsb_core::mode_s::NON_ICAO_ADDRESS != 0 {
+            if mm.addr & openradome_core::mode_s::NON_ICAO_ADDRESS != 0 {
                 "~"
             } else {
                 " "
@@ -344,12 +344,14 @@ impl<'a> Engine<'a> {
     fn run_command(&mut self, cmd: &str) {
         if !cmd.to_ascii_lowercase().contains("resetrangeoutline") {
             eprintln!(
-                "rustadsb: {COMMAND_FILE}: only resetRangeOutline is supported; ignored {cmd:?}"
+                "openradome: {COMMAND_FILE}: only resetRangeOutline is supported; ignored {cmd:?}"
             );
             return;
         }
         let Some(outline) = self.tracker.outline.as_mut() else {
-            eprintln!("rustadsb: resetRangeOutline: there is no range outline (needs --lat/--lon)");
+            eprintln!(
+                "openradome: resetRangeOutline: there is no range outline (needs --lat/--lon)"
+            );
             return;
         };
         eprintln!("resetting range outline");

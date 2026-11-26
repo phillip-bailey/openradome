@@ -1,5 +1,5 @@
 #!/bin/bash
-# --write-state compatibility: upstream and rustadsb each take the MLAT replay and save
+# --write-state compatibility: upstream and openradome each take the MLAT replay and save
 # their range outline at exit; then each starts (no input) from the OTHER's rangeDirs.gz.
 # All four outline.json files should be identical.
 set -u
@@ -11,7 +11,7 @@ OPTS="--net --net-only --quiet --lat ${LAT:?set LAT and LON to the receiver posi
 # 1. both decoders take the replay and save state at exit
 /usr/local/bin/readsb $OPTS --net-bi-port 43004,43104 --write-json st/up --write-state st/up/state 2>st/up.err &
 P1=$!
-./rustadsb-state $OPTS --net-bi-port 44004,44104 --write-json st/rs --write-state st/rs/state 2>st/rs.err &
+./openradome-state $OPTS --net-bi-port 44004,44104 --write-json st/rs --write-state st/rs/state 2>st/rs.err &
 P2=$!
 sleep 3
 python3 replay-pcap.py mlat.pcap 43104 43004 2>/dev/null & R1=$!
@@ -21,13 +21,13 @@ sleep 17   # one more 15 s outline.json write
 kill $P1 $P2; wait $P1 $P2 2>/dev/null
 ls -la st/up/state/internal_state/rangeDirs.gz st/rs/state/internal_state/rangeDirs.gz
 
-# 2. each starts from the other's file (only rangeDirs.gz: rustadsb writes no aircraft blobs)
+# 2. each starts from the other's file (only rangeDirs.gz: openradome writes no aircraft blobs)
 mkdir -p st/up-from-rs/state/internal_state st/rs-from-up/state/internal_state
 cp -p st/rs/state/internal_state/rangeDirs.gz st/up-from-rs/state/internal_state/
 cp -p st/up/state/internal_state/rangeDirs.gz st/rs-from-up/state/internal_state/
 /usr/local/bin/readsb $OPTS --net-bi-port 45004,45104 --write-json st/up-from-rs --write-state st/up-from-rs/state 2>st/up-from-rs.err &
 P3=$!
-./rustadsb-state $OPTS --net-bi-port 46004,46104 --write-json st/rs-from-up --write-state st/rs-from-up/state 2>st/rs-from-up.err &
+./openradome-state $OPTS --net-bi-port 46004,46104 --write-json st/rs-from-up --write-state st/rs-from-up/state 2>st/rs-from-up.err &
 P4=$!
 sleep 20
 kill $P3 $P4; wait $P3 $P4 2>/dev/null
@@ -36,8 +36,8 @@ python3 - <<'PY'
 import json
 def pts(d): return json.load(open(f"st/{d}/outline.json"))["actualRange"]["last24h"]["points"]
 up, rs, ufr, rfu = pts("up"), pts("rs"), pts("up-from-rs"), pts("rs-from-up")
-print("points: upstream", len(up), "| rustadsb", len(rs), "| upstream from rustadsb's file", len(ufr), "| rustadsb from upstream's file", len(rfu))
-print("upstream == rustadsb (live):           ", up == rs)
-print("rustadsb loads upstream's file exactly:", rfu == up)
-print("upstream loads rustadsb's file exactly:", ufr == rs)
+print("points: upstream", len(up), "| openradome", len(rs), "| upstream from openradome's file", len(ufr), "| openradome from upstream's file", len(rfu))
+print("upstream == openradome (live):           ", up == rs)
+print("openradome loads upstream's file exactly:", rfu == up)
+print("upstream loads openradome's file exactly:", ufr == rs)
 PY

@@ -1,5 +1,5 @@
 [package]
-name = "rustadsb-core"
+name = "openradome-core"
 description = "ADS-B and Mode S decoder library"
 version.workspace = true
 edition.workspace = true

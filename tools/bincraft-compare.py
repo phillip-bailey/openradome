@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Compare two aircraft.binCraft files (upstream's and rustadsb's) aircraft by aircraft, field by field.
+"""Compare two aircraft.binCraft files (upstream's and openradome's) aircraft by aircraft, field by field.
 
-Usage: bincraft-compare.py UPSTREAM_FILE RUSTADSB_FILE
+Usage: bincraft-compare.py UPSTREAM_FILE OPENRADOME_FILE
 Time-dependent fields (seen, seen_pos, messages, signal) are compared with a tolerance, since the two files are
 written at slightly different moments.
 """

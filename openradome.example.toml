@@ -1,17 +1,17 @@
 # ============================================================================================
-# rustadsb — example configuration (rustadsb --config /etc/rustadsb/rustadsb.toml)
+# OpenRadome — example configuration (openradome --config /etc/openradome/openradome.toml)
 # ============================================================================================
-# install.sh writes this file as /etc/rustadsb/rustadsb.toml on a new install, with your gain,
+# install.sh writes this file as /etc/openradome/openradome.toml on a new install, with your gain,
 # position and choices filled in, and never overwrites it afterwards. Every key is one of
-# rustadsb's long options without the "--": rustadsb --help lists them all, and any of them can
+# openradome's long options without the "--": openradome --help lists them all, and any of them can
 # go here. Options given on the command line override this file.
 #
 # After editing:
-#   1. check the file:  rustadsb --config /etc/rustadsb/rustadsb.toml --print-config
+#   1. check the file:  openradome --config /etc/openradome/openradome.toml --print-config
 #                       (prints the settings it understood; a mistake is named, e.g. unknown option "gian")
-#   2. apply it:        sudo systemctl restart rustadsb
-#   3. check it runs:   systemctl is-active rustadsb        (logs: journalctl -u rustadsb -n 30)
-# A file rustadsb cannot read stops the decoder, and with it every feed client or MLAT client that
+#   2. apply it:        sudo systemctl restart openradome
+#   3. check it runs:   systemctl is-active openradome        (logs: journalctl -u openradome -n 30)
+# A file openradome cannot read stops the decoder, and with it every feed client or MLAT client that
 # reads from it: always do step 1 first. A restart takes a few seconds; clients reconnect by themselves.
 #
 # TOML rules: text in "quotes"; numbers bare (gain = 49.6); on/off options are true or false, lower
@@ -55,9 +55,9 @@ net-bo-port = 30005             # Beast out: what feeders, MLAT clients and maps
 # --------------------------------------------------------------------------------------------
 json-location-accuracy = 2      # 2: the receiver position is in the JSON files; 0 leaves it out
 range-outline-hours = 24        # the range outline covers the last 24 hours
-write-json = "/run/rustadsb"    # aircraft.json, stats.json, receiver.json, outline.json. Keep it
+write-json = "/run/openradome"    # aircraft.json, stats.json, receiver.json, outline.json. Keep it
                                 # directly under /run: the service unit has systemd create it.
-write-state = "/var/lib/rustadsb"   # the range outline is saved here and survives restarts
+write-state = "/var/lib/openradome"   # the range outline is saved here and survives restarts
 quiet = true                    # no message printout (it would fill the journal)
 
 # --------------------------------------------------------------------------------------------
@@ -83,14 +83,14 @@ quiet = true                    # no message printout (it would fill the journal
 #
 # TLS:     on while BOTH mcp-tls-cert and mcp-tls-key are set; then it speaks HTTPS only. Without
 #          them it speaks plain HTTP, and the token crosses the network unencrypted.
-#          !! Only one of the two set = rustadsb refuses to start (and the decoder is down).
+#          !! Only one of the two set = openradome refuses to start (and the decoder is down).
 #          Switching TLS on or off changes the address clients use (https:// or http://).
 #          A renewed certificate is picked up within 10 s, without a restart.
 # mcp-port = 8091
-# mcp-token-file = "/etc/rustadsb/mcp-token"
+# mcp-token-file = "/etc/openradome/mcp-token"
 # mcp-bind-address = "0.0.0.0"         # on the network while the data ports stay on 127.0.0.1
-# mcp-tls-cert = "/etc/rustadsb/tls/fullchain.pem"   # PEM, certificate first, then the chain
-# mcp-tls-key = "/etc/rustadsb/tls/privkey.pem"      # PEM; readable by the service user
+# mcp-tls-cert = "/etc/openradome/tls/fullchain.pem"   # PEM, certificate first, then the chain
+# mcp-tls-key = "/etc/openradome/tls/privkey.pem"      # PEM; readable by the service user
 
 # --------------------------------------------------------------------------------------------
 # Optional extras

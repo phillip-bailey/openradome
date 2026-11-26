@@ -51,7 +51,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # name: the plain platform name in the archive (rustadsb-vX.Y.Z-<name>); target: the Rust target it is built for
+          # name: the plain platform name in the archive (openradome-vX.Y.Z-<name>); target: the Rust target it is built for
           - { name: linux-x86_64,   target: x86_64-unknown-linux-gnu,      os: ubuntu-latest, zig: true }
           - { name: linux-arm64,    target: aarch64-unknown-linux-gnu,     os: ubuntu-latest, zig: true }
           - { name: linux-armv7,    target: armv7-unknown-linux-gnueabihf, os: ubuntu-latest, zig: true }
@@ -96,7 +96,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
         shell: bash
         run: |
-          bin="target/${{ matrix.target }}/release/rustadsb"
+          bin="target/${{ matrix.target }}/release/openradome"
           "$bin" --help >/dev/null
           # decodes the synthetic flight capture exactly as upstream does
           "$bin" --ifile testdata/flights_uc8.bin --iformat UC8 --fix --lat 52.0 --lon 4.0 --max-range 450 --raw \
@@ -107,10 +107,10 @@ jobs:
         run: |
           set -eu
           case "$GITHUB_REF" in refs/tags/*) version="$GITHUB_REF_NAME" ;; *) version="dev-${GITHUB_SHA::7}" ;; esac
-          name="rustadsb-${version}-${{ matrix.name }}"
+          name="openradome-${version}-${{ matrix.name }}"
           mkdir -p "dist/$name"
-          case "${{ matrix.target }}" in *windows*) bin=rustadsb.exe ;; *) bin=rustadsb ;; esac
-          cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE rustadsb.example.toml "dist/$name/"
+          case "${{ matrix.target }}" in *windows*) bin=openradome.exe ;; *) bin=openradome ;; esac
+          cp "target/${{ matrix.target }}/release/$bin" README.md COPYING NOTICE openradome.example.toml "dist/$name/"
           cd dist
           case "${{ matrix.target }}" in
             *windows*) 7z a -bd -tzip "$name.zip" "$name" >/dev/null ;;
@@ -121,7 +121,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: rustadsb-${{ matrix.name }}
+          name: openradome-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14

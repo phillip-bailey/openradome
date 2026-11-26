@@ -1,4 +1,4 @@
-# rustadsb
+# OpenRadome
 
 ## What is ADS-B?
 
@@ -24,9 +24,9 @@ report is *automatic*, it *depends* on the aircraft's own navigation rather than
   others), whose maps are used by the public, journalists, researchers studying emissions and noise, airports and
   accident investigators.
 
-## What rustadsb does
+## What OpenRadome does
 
-rustadsb is the software at the heart of such a receiving station. It turns the raw radio signal from the USB radio
+OpenRadome is the software at the heart of such a receiving station. It turns the raw radio signal from the USB radio
 into a live list of aircraft with their positions, feeds the station's own map, and forwards the data to
 flight-tracking networks such as Flightradar24, FlightAware, ADS-B Exchange and adsb.lol. It is a memory-safe
 rewrite, in Rust, of readsb, the decoder most stations run today. It takes the same options and produces the same
@@ -77,7 +77,7 @@ program does:
    the timing data multilateration (MLAT) needs to locate aircraft that don't broadcast their position. Positions
    computed by MLAT come back in and are merged with everything else.
 
-Upstream is the standard program for this chain and the one most feeder setups run, in C. rustadsb does
+Upstream is the standard program for this chain and the one most feeder setups run, in C. OpenRadome does
 the same job, with the same flags and outputs, in safe Rust. It runs as both halves of a typical station: the
 decoder attached to the dongle, and the small per-network feed clients that forward its output.
 
@@ -130,7 +130,7 @@ decoder attached to the dongle, and the small per-network feed clients that forw
   `outline.json` (range outline per direction over `--range-outline-hours`).
 - `--write-state <dir>`: the range outline survives a restart. It is saved every 5 minutes and at exit (with
   `--write-state-only-on-exit`, every 6 hours and at exit) in `<dir>/internal_state/rangeDirs.gz`, in upstream's
-  own format, so rustadsb and upstream each read the other's file. Time slices that passed while nothing ran are
+  own format, so OpenRadome and upstream each read the other's file. Time slices that passed while nothing ran are
   cleared on load, so an old outline does not come back.
 - Upstream's command file: `echo resetRangeOutline > <json dir>/setGain` clears the range outline (after moving the
   antenna, say). The decoder looks for the file every second, deletes it, rewrites `outline.json` and saves the
@@ -158,11 +158,11 @@ decoder attached to the dongle, and the small per-network feed clients that forw
 - **Interactive mode** (`--interactive`, `--interactive-ttl`, `--no-interactive`; run as `viewadsb` it connects to
   `127.0.0.1:30005`): the aircraft table on the terminal, upstream's columns, units (`--metric`, `--gnss`) and
   sort order, drawn with plain ANSI codes.
-- **Dashboard** (`--dashboard-port <port>`, rustadsb only, off unless given): a status web page. See
+- **Dashboard** (`--dashboard-port <port>`, OpenRadome only, off unless given): a status web page. See
   [Dashboard](#dashboard).
-- **MCP server** (`--mcp-port <port>`, rustadsb only, off unless given): read-only tools an AI assistant can
+- **MCP server** (`--mcp-port <port>`, OpenRadome only, off unless given): read-only tools an AI assistant can
   ask about the station, over HTTP or HTTPS, behind a token. See [MCP server](#mcp-server).
-- **Configuration file** (`--config <file.toml>`, `--print-config`; rustadsb only): every option from a TOML
+- **Configuration file** (`--config <file.toml>`, `--print-config`; OpenRadome only): every option from a TOML
   file. See [Configuration file](#configuration-file).
 - `--stats`, `--raw`, `--onlyaddr`, `--show-only`, `--filter-DF` for the terminal.
 
@@ -191,28 +191,28 @@ Requirements: Rust stable (edition 2024).
 
 ```sh
 cargo build --release
-./target/release/rustadsb --help
+./target/release/openradome --help
 ```
 
 Decode an IQ capture and print the messages:
 
 ```sh
-rustadsb --ifile capture.bin --iformat UC8 --raw
-rustadsb --ifile capture.bin --stats            # receiver statistics, as upstream prints them
+openradome --ifile capture.bin --iformat UC8 --raw
+openradome --ifile capture.bin --stats            # receiver statistics, as upstream prints them
 ```
 
 Run a receiver with an RTL-SDR dongle, network outputs and JSON for tar1090 (the usual ports):
 
 ```sh
-rustadsb --device-type rtlsdr --gain 49.6 --fix --lat 51.5 --lon -0.1 \
+openradome --device-type rtlsdr --gain 49.6 --fix --lat 51.5 --lon -0.1 \
     --net --net-ro-port 30002 --net-sbs-port 30003 --net-bi-port 30004,30104 --net-bo-port 30005 \
-    --write-json /run/rustadsb
+    --write-json /run/openradome
 ```
 
 Feed an aggregator from a running decoder (what each network's feed client does):
 
 ```sh
-rustadsb --net --net-only --quiet --lat 51.5 --lon -0.1 \
+openradome --net --net-only --quiet --lat 51.5 --lon -0.1 \
     --net-connector 127.0.0.1,30005,beast_in,silent_fail \
     --net-connector feed.adsb.lol,30004,beast_reduce_plus_out,feed2.adsb.lol,1337 \
     --net-beast-reduce-interval 0.5 --uuid-file /usr/local/share/adsblol/adsblol-uuid \
@@ -242,17 +242,17 @@ JSON files are written to a temporary file and renamed, so readers never see a p
 
 ## Dashboard
 
-An optional status page, served by rustadsb itself. It is off unless you give a port. With `install.sh`, add
-it to `/etc/rustadsb/rustadsb.toml` (or install with `--dashboard-port 8090`), then restart:
+An optional status page, served by OpenRadome itself. It is off unless you give a port. With `install.sh`, add
+it to `/etc/openradome/openradome.toml` (or install with `--dashboard-port 8090`), then restart:
 
 ```toml
-# /etc/rustadsb/rustadsb.toml
+# /etc/openradome/openradome.toml
 dashboard-port = 8090
 dashboard-bind-address = "0.0.0.0"   # only needed when net-bind-address keeps the data ports on 127.0.0.1
 ```
 
 ```sh
-sudo systemctl restart rustadsb
+sudo systemctl restart openradome
 ```
 
 Then open `http://<the Pi's address>:8090/`. The page shows:
@@ -260,11 +260,11 @@ Then open `http://<the Pi's address>:8090/`. The page shows:
 - **Now:** messages per second, aircraft (and how many have a position), the furthest aircraft, positions
   decoded, signal and noise, strong signals (too many means the gain is too high), dropped samples (should be 0),
   and the decoder's own CPU and memory use.
-- **System** (Linux): the whole machine's CPU and load, the CPU of all rustadsb processes together (decoder and
+- **System** (Linux): the whole machine's CPU and load, the CPU of all openradome processes together (decoder and
   feed clients), memory and swap, temperature and, on a Raspberry Pi, the under-voltage warning (a weak power
   supply), disk space, Wi-Fi signal and uptime. Read from `/proc` and `/sys` every 10 s, by a background task.
 - **The last 24 hours:** graphs of the message rate, aircraft, range, signal and noise, CPU (whole machine and
-  rustadsb) and temperature, one point a minute. After a restart the time axis starts at an hour and grows.
+  OpenRadome) and temperature, one point a minute. After a restart the time axis starts at an hour and grows.
 - **Connections:** everything connected to the decoder's ports right now (feed clients, MLAT results, tar1090,
   viewers) and for how long, and the connections it makes itself (`--net-connector`).
 
@@ -289,17 +289,17 @@ port, and read-only: no tool can change anything.
 ### Turning it on
 
 ```toml
-# /etc/rustadsb/rustadsb.toml
+# /etc/openradome/openradome.toml
 mcp-port = 8091
-mcp-token-file = "/etc/rustadsb/mcp-token"        # one token of at least 32 characters
+mcp-token-file = "/etc/openradome/mcp-token"        # one token of at least 32 characters
 # mcp-bind-address = "0.0.0.0"                    # when net-bind-address keeps the data ports on 127.0.0.1
-# mcp-tls-cert = "/etc/rustadsb/tls/fullchain.pem"  # HTTPS: both lines, or neither (see HTTPS below)
-# mcp-tls-key = "/etc/rustadsb/tls/privkey.pem"
+# mcp-tls-cert = "/etc/openradome/tls/fullchain.pem"  # HTTPS: both lines, or neither (see HTTPS below)
+# mcp-tls-key = "/etc/openradome/tls/privkey.pem"
 ```
 
-`sudo ./install.sh --mcp-port 8091` makes a random token in `/etc/rustadsb/mcp-token` (readable by root and the
-`rustadsb` service only) and, on a new install, writes these lines; with an existing file it says what to add.
-Then `sudo systemctl restart rustadsb`. The server is on while `mcp-port` is set: put a `#` in front of it and
+`sudo ./install.sh --mcp-port 8091` makes a random token in `/etc/openradome/mcp-token` (readable by root and the
+`openradome` service only) and, on a new install, writes these lines; with an existing file it says what to add.
+Then `sudo systemctl restart openradome`. The server is on while `mcp-port` is set: put a `#` in front of it and
 restart to switch it off.
 
 ### Adding it to Claude Code
@@ -307,11 +307,11 @@ restart to switch it off.
 From the computer you run Claude Code on (the `$( )` fetches the token over SSH, so it never shows on screen):
 
 ```sh
-claude mcp add --transport http --scope user rustadsb https://<pi>:8091/mcp \
-  --header "Authorization: Bearer $(ssh <pi> sudo cat /etc/rustadsb/mcp-token)"
+claude mcp add --transport http --scope user openradome https://<pi>:8091/mcp \
+  --header "Authorization: Bearer $(ssh <pi> sudo cat /etc/openradome/mcp-token)"
 ```
 
-- `--transport http`: MCP's Streamable HTTP transport, which rustadsb speaks. Use `http://` in the address if
+- `--transport http`: MCP's Streamable HTTP transport, which OpenRadome speaks. Use `http://` in the address if
   the server runs without TLS, `https://` with it.
 - `--scope user`: available in all your projects; `--scope local` for the current folder only, `--scope project`
   to share it through the project's `.mcp.json` (the token would then be in that file: avoid).
@@ -321,22 +321,22 @@ claude mcp add --transport http --scope user rustadsb https://<pi>:8091/mcp \
 Check it:
 
 ```sh
-claude mcp list          # rustadsb: https://<pi>:8091/mcp (HTTP) - ✓ Connected
+claude mcp list          # openradome: https://<pi>:8091/mcp (HTTP) - ✓ Connected
 ```
 
 Then start a **new** Claude Code session (servers are loaded when a session starts). `/mcp` there lists
-rustadsb and its six tools. Ask in plain language (examples below); Claude Code asks your permission the first
+OpenRadome and its six tools. Ask in plain language (examples below); Claude Code asks your permission the first
 time it uses each tool, and "always allow" is safe for these, as none changes anything. Its answers show
-"Called rustadsb" when it used the station's tools.
+"Called OpenRadome" when it used the station's tools.
 
 | Problem | Cause |
 |---|---|
-| `✗ Failed to connect`, or 401 in the decoder's log | wrong or missing token: `ssh <pi> sudo cat /etc/rustadsb/mcp-token` must print one token of 64 characters |
+| `✗ Failed to connect`, or 401 in the decoder's log | wrong or missing token: `ssh <pi> sudo cat /etc/openradome/mcp-token` must print one token of 64 characters |
 | name not found, or no connection | the name or port is not reachable from here (another network, firewall, `mcp-bind-address` still 127.0.0.1) |
 | certificate error | the certificate is not trusted (self-signed: `NODE_EXTRA_CA_CERTS`), or the name in the address is not in the certificate |
 | tools missing after `claude mcp add` | the session was started before: start a new one |
 
-`claude mcp remove rustadsb` removes it, stored token included. After a token change (see Token below), remove it
+`claude mcp remove openradome` removes it, stored token included. After a token change (see Token below), remove it
 and add it again.
 
 **Other MCP clients** work the same way if they speak Streamable HTTP and can send an `Authorization` header.
@@ -355,8 +355,8 @@ for one question) and explains the answer.
 | Tool | Options | What it returns |
 |---|---|---|
 | `station_status` | none | messages per second (last 10 s and last minute), aircraft and how many have a position, the furthest aircraft and positions decoded in the last minute, signal and noise (dBFS), strong signals, dropped samples, the decoder's CPU and memory, uptime; and the maxima over the kept history |
-| `history` | `minutes` (1 to 1440, default 60) | one entry a minute, oldest first: message rate, aircraft, furthest aircraft, positions, signal, noise, strong signals, dropped samples, the computer's CPU and rustadsb's share, temperature. Kept in memory for up to 24 hours, from the decoder's start |
-| `system` | none | the computer: CPU (last 10 s), load average, memory and swap, temperature, Raspberry Pi under-voltage, disk use, Wi-Fi signal, uptime, how many rustadsb processes run and their CPU together (Linux only) |
+| `history` | `minutes` (1 to 1440, default 60) | one entry a minute, oldest first: message rate, aircraft, furthest aircraft, positions, signal, noise, strong signals, dropped samples, the computer's CPU and OpenRadome's share, temperature. Kept in memory for up to 24 hours, from the decoder's start |
+| `system` | none | the computer: CPU (last 10 s), load average, memory and swap, temperature, Raspberry Pi under-voltage, disk use, Wi-Fi signal, uptime, how many OpenRadome processes run and their CPU together (Linux only) |
 | `connections` | none | every open connection: clients on the decoder's ports (`beast out :30005`, `beast in :30104`, ...), its own outgoing connectors, how long each has been connected, counts per port |
 | `aircraft_query` | `query`, plus the options below | the matching aircraft in readsb's API format: `hex`, `flight` (callsign), `alt_baro`, `gs`, `track`, `lat`, `lon`, `squawk`, `category`, `rssi`, `seen`, and `dst` (distance in nm from the query's centre) |
 | `range_outline` | none | the furthest position heard in each direction over the outline period (24 h by default): the station's coverage. Needs the receiver position and `write-json` |
@@ -395,7 +395,7 @@ Questions that work well, and the tools behind them:
 | "Compare the last hour with the hour before." | `history` (minutes 120) |
 
 What it does not know: anything older than the decoder's start (the history is in memory and starts again at
-each restart), registrations and types beyond what the aircraft broadcast (rustadsb has no aircraft database),
+each restart), registrations and types beyond what the aircraft broadcast (OpenRadome has no aircraft database),
 and which program is behind a local connection (`connections` shows `127.0.0.1:<port>`; a station with many
 feeders has dozens of them, which is normal).
 
@@ -408,22 +408,22 @@ the previous stays in use.
 
 To switch TLS off, put a `#` in front of **both** lines and restart: the server then speaks plain HTTP on the same
 port, and clients must change `https://` to `http://` (in Claude Code: remove and add it again). Only one of the
-two set is an error, and rustadsb does not start. Without TLS the token crosses the network in the clear: keep
+two set is an error, and OpenRadome does not start. Without TLS the token crosses the network in the clear: keep
 it to a network you trust.
 
 ### Token
 
 `install.sh --mcp-port` makes it: 32 random bytes from `/dev/urandom` as 64 hex characters (256 bits), in
-`/etc/rustadsb/mcp-token`, owner `root:rustadsb`, mode 0640, made only if the file does not exist. rustadsb reads
+`/etc/openradome/mcp-token`, owner `root:openradome`, mode 0640, made only if the file does not exist. OpenRadome reads
 it when it starts: at least 32 characters, no spaces, and a warning if every user can read the file.
 
 To rotate it (if it may have leaked):
 
 ```sh
-sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/rustadsb/mcp-token.new'
-sudo chown root:rustadsb /etc/rustadsb/mcp-token.new && sudo chmod 0640 /etc/rustadsb/mcp-token.new
-sudo mv /etc/rustadsb/mcp-token.new /etc/rustadsb/mcp-token
-sudo systemctl restart rustadsb        # from now on the old token gets 401
+sudo sh -c 'umask 077; openssl rand -hex 32 > /etc/openradome/mcp-token.new'
+sudo chown root:openradome /etc/openradome/mcp-token.new && sudo chmod 0640 /etc/openradome/mcp-token.new
+sudo mv /etc/openradome/mcp-token.new /etc/openradome/mcp-token
+sudo systemctl restart openradome        # from now on the old token gets 401
 ```
 
 then remove and add the server again in each client.
@@ -449,11 +449,11 @@ A Cargo workspace with two crates:
 
 ```
 crates/
-  rustadsb-core/   library: decoding and tracking. No I/O, no threads, no async.
-  rustadsb/        binary: dongle, files, sockets, JSON files, command line.
+  openradome-core/   library: decoding and tracking. No I/O, no threads, no async.
+  openradome/        binary: dongle, files, sockets, JSON files, command line.
 ```
 
-`rustadsb-core` takes bytes in and returns messages and aircraft state, so all of the decoding and tracking is
+`openradome-core` takes bytes in and returns messages and aircraft state, so all of the decoding and tracking is
 testable with vectors and recorded files.
 
 ```
@@ -477,7 +477,7 @@ testable with vectors and recorded files.
    (tokio clients)       stats, outline .json
 ```
 
-**rustadsb-core**
+**openradome-core**
 
 | Module | Upstream | Does |
 |---|---|---|
@@ -492,7 +492,7 @@ testable with vectors and recorded files.
 | `beast`, `output`, `sbs` | `net_io.c` | wire formats in and out |
 | `synth` | | test signal generator (`examples/synth_iq.rs`) |
 
-**rustadsb (binary)**
+**OpenRadome (binary)**
 
 | Module | Does |
 |---|---|
@@ -509,7 +509,7 @@ event thread, joined by bounded channels.
 ## Verification against upstream
 
 Upstream is built in Docker at a pinned commit (`tools/upstream/Dockerfile`) and, for live checks, run on the
-Pi next to rustadsb. The same input goes through both programs and the outputs are compared.
+Pi next to OpenRadome. The same input goes through both programs and the outputs are compared.
 
 | Input | Compared | Result |
 |---|---|---|
@@ -546,28 +546,33 @@ curl -fsSL https://raw.githubusercontent.com/phillip-bailey/openradome/main/inst
 ```
 
 The script picks the build for the CPU, downloads it with the release's `SHA256SUMS` and refuses a mismatch,
-installs `/usr/local/bin/rustadsb`, creates the `rustadsb` system user (in `plugdev`), adds a udev rule for
-the dongle and keeps the DVB-T TV driver off it, then writes the options file `/etc/rustadsb/rustadsb.toml`
-(see [Configuration file](#configuration-file)) and `rustadsb.service` and starts it. JSON goes to
-`/run/rustadsb`, Beast to port 30005.
+installs `/usr/local/bin/openradome`, creates the `openradome` system user (in `plugdev`), adds a udev rule for
+the dongle and keeps the DVB-T TV driver off it, then writes the options file `/etc/openradome/openradome.toml`
+(see [Configuration file](#configuration-file)) and `openradome.service` and starts it. JSON goes to
+`/run/openradome`, Beast to port 30005.
 
-- Re-run it to upgrade; your `rustadsb.toml` is kept, the previous binary saved as `rustadsb.prev`, and
-  other services still running the old binary (feed clients using `rustadsb --net-only`) are restarted.
+- Re-run it to upgrade; your `openradome.toml` is kept, the previous binary saved as `openradome.prev`, and
+  other services still running the old binary (feed clients using `openradome --net-only`) are restarted.
   `--rollback` puts the previous binary back.
 - `--version vX.Y.Z` pins a release; `--archive FILE` installs a downloaded archive (offline).
 - If dump1090 is running it stops and asks: `--replace` disables it (it holds the dongle).
 - `--json-dir /run/<name>` changes where the JSON goes; `--bind 127.0.0.1` keeps the ports local.
 - `sudo ./install.sh --uninstall` removes it (`--purge` also the options file and user).
-- Installs from before 0.4 keep their options as shell variables in `/etc/default/rustadsb`, which still works.
-  `install.sh --migrate-config` converts it to `rustadsb.toml` (rustadsb itself does the conversion, and the result
-  must read back the same before anything changes); the old file is kept as `/etc/default/rustadsb.migrated-<date>`.
+- **Moving from rustadsb** (OpenRadome's name before 0.6): running the installer on a rustadsb install moves it
+  over once. The options file is converted and checked with the new binary first; then the service, user and group
+  (renamed in place, so file owners are kept), `/etc/rustadsb`, the saved state, the MCP token and TLS files become
+  OpenRadome's. The old paths stay as links: `/usr/local/bin/rustadsb` (feed clients that start it keep working),
+  `/etc/rustadsb`, `/run/rustadsb` (re-created at boot), and the service also answers to `rustadsb.service`.
+  `--rollback` afterwards puts the last rustadsb binary back under the new name.
+- rustadsb installs from before 0.4 kept their options as shell variables in `/etc/default/rustadsb`; the move
+  converts them to `openradome.toml` too (the old file is kept as `/etc/default/rustadsb.migrated-<date>`).
 
 ### Configuration file
 
-`rustadsb --config <file.toml>` reads options from a TOML file. [`rustadsb.example.toml`](rustadsb.example.toml) is a
+`openradome --config <file.toml>` reads options from a TOML file. [`openradome.example.toml`](openradome.example.toml) is a
 complete, commented example (it is also in every release archive, and `install.sh` writes it, with your choices
-filled in, as `/etc/rustadsb/rustadsb.toml` on a new install). Each key is a long option's name as
-`rustadsb --help` lists it, without the dashes; `true` turns an on/off option on; an option that can be given
+filled in, as `/etc/openradome/openradome.toml` on a new install). Each key is a long option's name as
+`openradome --help` lists it, without the dashes; `true` turns an on/off option on; an option that can be given
 more than once takes a list. Options on the command line override the file. A mistyped key is an error, not
 ignored.
 
@@ -581,32 +586,32 @@ net = true
 net-bind-address = "127.0.0.1"
 net-bo-port = 30005
 net-bi-port = "30004,30104"
-write-json = "/run/rustadsb"
+write-json = "/run/openradome"
 net-connector = ["feed.adsb.lol,30004,beast_reduce_plus_out"]
 ```
 
 `--print-config` prints the options it is given (and those from `--config`) as such a file, so a command line
-becomes a config file with `rustadsb <your options> --print-config > rustadsb.toml`.
+becomes a config file with `openradome <your options> --print-config > openradome.toml`.
 
-macOS and Windows: download the archive from the release page (see below), unpack it and run `rustadsb`
+macOS and Windows: download the archive from the release page (see below), unpack it and run `openradome`
 directly.
 
 ### Which file to download
 
-Each release has one archive per platform, named `rustadsb-<version>-<platform>`. On Linux, `install.sh` picks the
+Each release has one archive per platform, named `openradome-<version>-<platform>`. On Linux, `install.sh` picks the
 right one for you; to download one yourself:
 
 | Your device | Download |
 |---|---|
-| Raspberry Pi 5, 4, 3 or Zero 2 W on **64-bit** Raspberry Pi OS | `rustadsb-<version>-linux-arm64.tar.gz` |
-| Raspberry Pi 5, 4, 3, 2 or Zero 2 W on **32-bit** Raspberry Pi OS | `rustadsb-<version>-linux-armv7.tar.gz` |
-| Raspberry Pi 1, Zero or Zero W | `rustadsb-<version>-linux-armv6.tar.gz` |
-| Other 64-bit ARM Linux boards (Orange Pi, Rock Pi, Odroid, ARM servers) | `rustadsb-<version>-linux-arm64.tar.gz` |
-| Linux PC, server, mini PC or VM (Intel or AMD) | `rustadsb-<version>-linux-x86_64.tar.gz` |
-| Mac with Apple silicon (M1 or later) | `rustadsb-<version>-macos-arm64.tar.gz` |
-| Mac with an Intel processor | `rustadsb-<version>-macos-x86_64.tar.gz` |
-| Windows PC (Intel or AMD) | `rustadsb-<version>-windows-x86_64.zip` |
-| Windows on ARM (Snapdragon laptops, Surface Pro X) | `rustadsb-<version>-windows-arm64.zip` |
+| Raspberry Pi 5, 4, 3 or Zero 2 W on **64-bit** Raspberry Pi OS | `openradome-<version>-linux-arm64.tar.gz` |
+| Raspberry Pi 5, 4, 3, 2 or Zero 2 W on **32-bit** Raspberry Pi OS | `openradome-<version>-linux-armv7.tar.gz` |
+| Raspberry Pi 1, Zero or Zero W | `openradome-<version>-linux-armv6.tar.gz` |
+| Other 64-bit ARM Linux boards (Orange Pi, Rock Pi, Odroid, ARM servers) | `openradome-<version>-linux-arm64.tar.gz` |
+| Linux PC, server, mini PC or VM (Intel or AMD) | `openradome-<version>-linux-x86_64.tar.gz` |
+| Mac with Apple silicon (M1 or later) | `openradome-<version>-macos-arm64.tar.gz` |
+| Mac with an Intel processor | `openradome-<version>-macos-x86_64.tar.gz` |
+| Windows PC (Intel or AMD) | `openradome-<version>-windows-x86_64.zip` |
+| Windows on ARM (Snapdragon laptops, Surface Pro X) | `openradome-<version>-windows-arm64.zip` |
 
 Not sure which Linux build? Run `uname -m` and `getconf LONG_BIT`:
 
@@ -648,7 +653,9 @@ git tag v0.3.0 && git push origin v0.3.0
 | `macos-arm64` | `aarch64-apple-darwin` |
 | `macos-x86_64` | `x86_64-apple-darwin` |
 
-Releases before the plain names named the archives after the Rust target
+Releases before 0.6 were published under the project's earlier name, rustadsb (`rustadsb-v0.5.0-linux-armv7.tar.gz`,
+program `rustadsb`); `install.sh` still finds them, and moves a rustadsb install over to OpenRadome (see
+Install). Releases before the plain names named the archives after the Rust target
 (`rustadsb-v0.2.0-armv7-unknown-linux-gnueabihf.tar.gz`); `install.sh` tries the plain name first and falls
 back to that. Linux binaries need glibc 2.31 or newer.
 Tested on real hardware so far: armv7 (Pi 2) and macOS Apple silicon. The other targets build but have not been run.
@@ -660,7 +667,7 @@ Tested on real hardware so far: armv7 (Pi 2) and macOS Apple silicon. The other 
 ```sh
 make test    # cargo fmt --check, clippy -D warnings, all tests
 make pi      # cross-compile for armv7 (Raspberry Pi 2/3/4 32-bit) with cargo-zigbuild
-make push    # make pi, then rsync to $(PI):$(PI_DIR)/rustadsb
+make push    # make pi, then rsync to $(PI):$(PI_DIR)/openradome
 ```
 
 Cross-compiling from macOS needs `brew install rustup zig`, `cargo install cargo-zigbuild`,
@@ -673,20 +680,20 @@ To install a build as a service, see [Install](#install): `install.sh --archive 
 
 | Tool | Does |
 |---|---|
-| `tools/compare.sh capture.bin [UC8\|SC16\|SC16Q11]` | run one IQ file through upstream (Docker) and rustadsb, diff messages and statistics |
+| `tools/compare.sh capture.bin [UC8\|SC16\|SC16Q11]` | run one IQ file through upstream (Docker) and OpenRadome, diff messages and statistics |
 | `tools/regen-golden.sh` | regenerate the golden files in `testdata/` from upstream |
 | `examples/synth_iq.rs` | synthetic captures: random frames, flights, noise, bit errors, overlaps |
 | `tools/replay-beast.py capture.bin PORT` | replay a recorded Beast stream at its original pace |
 | `tools/replay-pcap.py capture.pcap MLAT_PORT BEAST_PORT` | replay a `tcpdump` capture of mlat-client results and a Beast flow, per connection, at capture pace |
 | `tools/compare-json.py DIR` | compare two `aircraft.json` files field by field |
 | `tools/soak.sh DIR` / `tools/soak-report.py` | log a running service once a minute and summarise the log |
-| `tools/state-compare.sh` | on a Pi with upstream installed as `/usr/local/bin/readsb`, `./rustadsb-state` and `mlat.pcap` in `~/cmp`: both decoders save state from the replay, then each restarts from the other's `rangeDirs.gz` |
+| `tools/state-compare.sh` | on a Pi with upstream installed as `/usr/local/bin/readsb`, `./openradome-state` and `mlat.pcap` in `~/cmp`: both decoders save state from the replay, then each restarts from the other's `rangeDirs.gz` |
 
 ```sh
-docker build -t rustadsb-upstream tools/upstream
+docker build -t openradome-upstream tools/upstream
 cargo build --release
 tools/compare.sh capture.bin
-cargo run --release --example synth_iq -p rustadsb-core -- out.bin --random 300 --count 4000 --flip 20 --overlap 10
+cargo run --release --example synth_iq -p openradome-core -- out.bin --random 300 --count 4000 --flip 20 --overlap 10
 ```
 
 ## Development

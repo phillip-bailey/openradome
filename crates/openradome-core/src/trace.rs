@@ -659,8 +659,8 @@ mod tests {
             point(1000, 1.0, 2.0, 100, false),
             point(21_000, 1.1, 2.1, 100, true),
         ];
-        let j = trace_json(0x4ca536, &pts, Kind::Full, 0, None, 0, "rustadsb test");
-        assert!(j.starts_with("{\"icao\":\"4ca536\",\n\"version\": \"rustadsb test\",\n\"timestamp\": 1.000,\n\"trace\":[ \n[0.00,1.000000,2.000000,"), "{j}");
+        let j = trace_json(0x4ca536, &pts, Kind::Full, 0, None, 0, "openradome test");
+        assert!(j.starts_with("{\"icao\":\"4ca536\",\n\"version\": \"openradome test\",\n\"timestamp\": 1.000,\n\"trace\":[ \n[0.00,1.000000,2.000000,"), "{j}");
         assert!(
             j.ends_with("{\"type\":\"adsb_icao\"},\"adsb_icao\",null,null,279,null] ]\n }\n"),
             "{j}"

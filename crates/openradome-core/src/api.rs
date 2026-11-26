@@ -2,7 +2,7 @@
 //! snapshot of the aircraft list and build the reply body (JSON or binCraft).
 //!
 //! A port of `parseFetch` and `apiReq` from upstream's `api.c`. The HTTP server itself is in the
-//! `rustadsb` crate; this module has no I/O so it can be tested on its own. Like upstream, a request
+//! `openradome` crate; this module has no I/O so it can be tested on its own. Like upstream, a request
 //! is lower-cased before parsing, and the snapshot is a list sorted by longitude that is replaced as a
 //! whole once per `--write-json-every` interval.
 

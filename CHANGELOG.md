@@ -7,23 +7,35 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
 
 ## [Unreleased]
 
-The project is becoming **OpenRadome** (command `radome`); until that release the program, its files and its
-service are still called `rustadsb`.
+## [0.6.0] - 2026-11-26
 
-### Added
-- `rustadsb.example.toml`: a complete, commented configuration. It goes into every release archive, and
-  `install.sh` writes it as `/etc/rustadsb/rustadsb.toml` on a new install, with the install's gain, position,
-  bind address, JSON directory, dashboard and MCP filled in (and their LAN bind lines when `--bind 127.0.0.1`
-  keeps the data ports local). An archive without it gets the previous built-in template.
-- `docs/`: the OpenRadome website (GitHub Pages), not yet published.
-- `CHANGELOG.md` (this file).
+The project is now **OpenRadome**: one name for the project, the repository, the program and its files.
 
 ### Changed
+- Renamed from rustadsb: the program is `openradome`, the crates `openradome` and `openradome-core`, the
+  service `openradome.service`, the options file `/etc/openradome/openradome.toml`, the JSON directory
+  `/run/openradome`, the saved state `/var/lib/openradome`, the user and group `openradome`, and the release
+  archives `openradome-vX.Y.Z-<platform>`. The dashboard and the MCP server introduce themselves as OpenRadome.
+- `install.sh` moves an existing rustadsb install over, once: the options file is converted and checked with
+  the new binary first; then the service, the user and group (renamed in place, so file owners are kept),
+  `/etc/rustadsb` (options, MCP token, TLS files), the saved state and the udev and DVB-T files become
+  OpenRadome's. The old paths stay as links: `/usr/local/bin/rustadsb` (feed clients that start it keep
+  working), `/etc/rustadsb`, `/run/rustadsb` (re-created at every boot), and the service answers to
+  `rustadsb.service` too. `--rollback` puts the last rustadsb binary back under the new name.
+- `install.sh` finds releases under the old name (`rustadsb-vX.Y.Z-...`) as well; its environment variables
+  are `OPENRADOME_REPO_URL`, `OPENRADOME_VERSION` and `OPENRADOME_TOKEN` (the `RUSTADSB_` ones still work).
+- The dashboard counts processes named `openradome` or `rustadsb` (feed clients started through the old link).
 - README: the MCP section rewritten: turning it on, adding it to Claude Code (checking, permissions,
   troubleshooting, removal), every tool and query with example questions, HTTPS on and off, the token's
   generation and rotation.
-- The repository is now `github.com/phillip-bailey/openradome` (was `p0bailey/rustadbtest`; GitHub redirects
-  the old addresses). `install.sh` downloads from there.
+
+### Added
+- `openradome.example.toml`: a complete, commented configuration. It goes into every release archive, and
+  `install.sh` writes it as `/etc/openradome/openradome.toml` on a new install, with the install's gain,
+  position, bind address, JSON directory, dashboard and MCP filled in (and their LAN bind lines when
+  `--bind 127.0.0.1` keeps the data ports local).
+- `docs/`: the OpenRadome website (GitHub Pages).
+- `CHANGELOG.md` (this file).
 
 ## [0.5.0] - 2026-11-25
 
@@ -116,7 +128,8 @@ First release, not published on GitHub: the decoder (demodulator, Mode S, ADS-B,
 decoding, CPR positions), RTL-SDR, IQ-file, Beast and raw input, Beast, raw, SBS and `beast_reduce` output,
 aircraft tracking, and the JSON files tar1090 reads, all checked against readsb's output.
 
-[Unreleased]: https://github.com/phillip-bailey/openradome/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/phillip-bailey/openradome/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/phillip-bailey/openradome/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/phillip-bailey/openradome/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/phillip-bailey/openradome/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/phillip-bailey/openradome/compare/v0.3.0...v0.3.1

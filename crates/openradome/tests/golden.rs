@@ -12,10 +12,10 @@ fn testdata(name: &str) -> PathBuf {
 }
 
 fn run(args: &[&str]) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args(args)
         .output()
-        .expect("run rustadsb");
+        .expect("run openradome");
     assert!(
         out.status.success(),
         "{}",
@@ -125,7 +125,7 @@ fn flags_change_the_result_like_upstream() {
 
 #[test]
 fn missing_input_is_an_error() {
-    let out = Command::new(env!("CARGO_BIN_EXE_rustadsb"))
+    let out = Command::new(env!("CARGO_BIN_EXE_openradome"))
         .args(["--ifile", "/nonexistent/capture.bin", "--raw"])
         .output()
         .unwrap();

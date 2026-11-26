@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Run one IQ capture through upstream (Docker image rustadsb-upstream) and through
+# Run one IQ capture through upstream (Docker image openradome-upstream) and through
 # this implementation, and diff the decoded messages and the receiver statistics.
 #
 #   tools/compare.sh capture.bin [iformat]       # iformat: UC8 (default), SC16, SC16Q11
 #   EXTRA='--aggressive --modeac' tools/compare.sh ...   # flags given to both programs
 #
-# Build the reference first:  docker build -t rustadsb-upstream tools/upstream
+# Build the reference first:  docker build -t openradome-upstream tools/upstream
 set -euo pipefail
 
 cap=${1:?usage: tools/compare.sh capture.bin [iformat]}
 fmt=${2:-UC8}
 extra=${EXTRA:-}
 here=$(cd "$(dirname "$0")/.." && pwd)
-bin=${RUSTADSB:-$here/target/release/rustadsb}
+bin=${OPENRADOME:-$here/target/release/openradome}
 dir=$(cd "$(dirname "$cap")" && pwd)
 name=$(basename "$cap")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 # upstream exits non-zero at end of file ("Abnormal exit"), which is expected here
-up() { docker run --rm -v "$dir":/data rustadsb-upstream --device-type ifile --ifile "/data/$name" --iformat "$fmt" $extra "$@" 2>/dev/null || true; }
+up() { docker run --rm -v "$dir":/data openradome-upstream --device-type ifile --ifile "/data/$name" --iformat "$fmt" $extra "$@" 2>/dev/null || true; }
 
 up --raw >"$tmp/up.raw"
 "$bin" --ifile "$cap" --iformat "$fmt" $extra --raw >"$tmp/rs.raw"

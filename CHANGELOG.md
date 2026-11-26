@@ -13,6 +13,7 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
 
 ### Changed
 - Website: the AI section is now "Talk to your receiver."
+- README: a link to the website at the top, with releases, changelog and security.
 
 ## [0.6.0] - 2026-11-26
 

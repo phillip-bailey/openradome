@@ -7,13 +7,20 @@ PI_DIR ?= openradome
 TARGET ?= armv7-unknown-linux-gnueabihf
 GLIBC  ?= 2.31
 
-.PHONY: check test pi push
+.PHONY: check test fuzz pi push
 check:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
 
 test: check
 	cargo test
+
+# A longer fuzz hunt than the one `cargo test` runs (crates/openradome-core/tests/fuzz.rs):
+#   make fuzz FUZZ_ITERS=50000000 FUZZ_SEED=7
+FUZZ_ITERS ?= 5000000
+FUZZ_SEED  ?= $(shell date +%s)
+fuzz:
+	FUZZ_ITERS=$(FUZZ_ITERS) FUZZ_SEED=$(FUZZ_SEED) cargo test --release -p openradome-core --test fuzz
 
 pi:
 	cargo zigbuild --release --target $(TARGET).$(GLIBC)

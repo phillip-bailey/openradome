@@ -31,3 +31,13 @@ gen() {
 
 gen synth_uc8
 gen flights_uc8 --fix --lat 52.0 --lon 4.0 --max-range 450
+
+# aircraft.binCraft for the flights capture. --throttle: at full speed upstream reads the 3 s file in
+# a few ms and writes no aircraft (it times them by the clock). Stored uncompressed.
+json=$(mktemp -d)
+docker run --rm -v "$PWD":/data -v "$json":/json openradome-upstream --device-type ifile \
+  --ifile /data/flights_uc8.bin --throttle --fix --lat 52.0 --lon 4.0 --max-range 450 \
+  --write-json /json --quiet 2>/dev/null || true
+zstd -dc "$json/aircraft.binCraft.zst" >flights_uc8.upstream.binCraft
+rm -rf "$json"
+wc -c flights_uc8.upstream.binCraft

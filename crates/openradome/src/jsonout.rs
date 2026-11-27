@@ -117,10 +117,42 @@ pub fn read_command(dir: &Path) -> Command {
 
 /// Write `contents` to `dir/name` via a temporary file and a rename, so readers never
 /// see a half-written file.
+///
+/// The temporary file has a random name and is created only if nothing is there yet (`O_EXCL`):
+/// with a fixed name, anyone who can write to `dir` could put a symlink there and have the decoder
+/// overwrite the file it points to. Something already at a name just means another try.
 pub fn write_atomic(dir: &Path, name: &str, contents: impl AsRef<[u8]>) -> io::Result<()> {
-    let tmp = dir.join(format!("{name}.tmp"));
-    fs::write(&tmp, contents)?;
-    fs::rename(&tmp, dir.join(name))
+    use std::hash::{BuildHasher, Hasher};
+    use std::io::Write;
+    let mut last = None;
+    for _ in 0..8 {
+        // a fresh RandomState gives a different, unpredictable value each time
+        let r = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
+        let tmp = dir.join(format!(".{name}.{r:016x}.tmp"));
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp);
+        let mut file = match file {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                last = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        let written = file.write_all(contents.as_ref()).and_then(|()| {
+            drop(file);
+            fs::rename(&tmp, dir.join(name))
+        });
+        if written.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        return written;
+    }
+    Err(last.unwrap_or_else(|| io::Error::other("no temporary file name was free")))
 }
 
 /// Gzip `data` (level 1, as upstream's quick path).
@@ -398,5 +430,231 @@ mod tests {
         // set back an hour: the next firing (an hour ahead) would wait an hour
         assert!(due(2_000 - 3_600_000, 2_000, 1_000));
         assert!(due(0, i64::MIN, 15_000), "forced");
+    }
+
+    fn tmp_files(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn a_reader_only_ever_sees_whole_files() {
+        let dir = temp_dir("atomic");
+        let big = |c: u8| vec![c; 256 * 1024];
+        write_atomic(&dir, "aircraft.json", big(b'a')).unwrap();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let (dir, stop) = (dir.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let got = fs::read(dir.join("aircraft.json")).unwrap();
+                    assert_eq!(got.len(), 256 * 1024, "a partial file");
+                    assert!(got.iter().all(|&c| c == got[0]), "two versions mixed");
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        for i in 0..200 {
+            write_atomic(
+                &dir,
+                "aircraft.json",
+                big(if i % 2 == 0 { b'b' } else { b'a' }),
+            )
+            .unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0);
+        assert!(
+            tmp_files(&dir).is_empty(),
+            "no temporary files left: {:?}",
+            tmp_files(&dir)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_planted_symlink_is_not_followed() {
+        let dir = temp_dir("symlink");
+        let victim = dir.join("history.sqlite");
+        fs::write(&victim, "precious").unwrap();
+        // where the old fixed-name temporary file went
+        std::os::unix::fs::symlink(&victim, dir.join("aircraft.json.tmp")).unwrap();
+        write_atomic(&dir, "aircraft.json", "{}").unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "precious");
+        assert_eq!(fs::read_to_string(dir.join("aircraft.json")).unwrap(), "{}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_old_file_and_no_temporary_one() {
+        let dir = temp_dir("fail");
+        write_atomic(&dir, "stats.json", "old").unwrap();
+        // the target is a directory: the rename fails after the temporary file is written
+        fs::create_dir(dir.join("outline.json")).unwrap();
+        assert!(write_atomic(&dir, "outline.json", "new").is_err());
+        assert!(tmp_files(&dir).is_empty(), "{:?}", tmp_files(&dir));
+        assert!(write_atomic(&dir.join("missing"), "x.json", "y").is_err());
+        assert_eq!(fs::read_to_string(dir.join("stats.json")).unwrap(), "old");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The whole writer: what `--write-json` leaves in its directory as time goes on.
+    #[test]
+    fn the_writer_writes_every_file_when_due() {
+        use openradome_core::convert::InputFormat;
+        use openradome_core::demod::Demodulator;
+        use openradome_core::mode_s::{Decoder, ModesMessage};
+        use openradome_core::track::{RangeOutline, TrackerConfig};
+
+        let dir = temp_dir("writer");
+        const T0: i64 = 1_700_000_000_000;
+        let mut tracker = Tracker::new(TrackerConfig::new(Some(52.0), Some(4.0), None));
+        tracker.outline = Some(RangeOutline::new(24 * 3_600_000));
+        let pipe = IqPipeline::new(Demodulator::new(Decoder::new(1)), InputFormat::Uc8, 1024);
+        let mut recorder = StatsRecorder::new(T0);
+        let opts = JsonOptions {
+            gzip: true,
+            bin_gz: true,
+            with_local: true,
+            gain_db: Some(29.7),
+            ..JsonOptions::default()
+        };
+        let mut w = JsonWriter::new(&dir, 1_000, T0, &tracker, 1, opts).unwrap();
+        let receiver: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("receiver.json")).unwrap()).unwrap();
+        assert_eq!(receiver["lat"], 52.0);
+        assert_eq!(receiver["outlineJson"], true);
+
+        // an aircraft: a position pair and an identification, each heard twice
+        let mut d = Decoder::new(1);
+        let frames = [
+            "8D40621D58C382D690C8AC2863A7",
+            "8D40621D58C386435CC412692AD6",
+            "8D4840D6202CC371C32CE0576098",
+            "8D4840D6202CC371C32CE0576098",
+        ];
+        for (i, f) in frames.iter().enumerate() {
+            let bytes: Vec<u8> = (0..f.len() / 2)
+                .map(|j| u8::from_str_radix(&f[2 * j..2 * j + 2], 16).unwrap())
+                .collect();
+            let mut mm = ModesMessage::from_bytes(&bytes);
+            mm.sys_timestamp = T0 + 100 * i as i64;
+            mm.signal_level = 0.01;
+            d.decode(&mut mm);
+            tracker.update_from_message(&mut mm);
+        }
+        let now = T0 + 1_000;
+        w.tick(now, &mut tracker, &pipe, &recorder, false).unwrap();
+        let aircraft: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("aircraft.json")).unwrap()).unwrap();
+        let list = aircraft["aircraft"].as_array().unwrap();
+        assert!(
+            list.iter()
+                .any(|a| a["flight"].as_str().is_some_and(|f| f.trim() == "KLM1023"))
+        );
+        let mut unzipped = Vec::new();
+        flate2::read::GzDecoder::new(fs::File::open(dir.join("aircraft.json.gz")).unwrap())
+            .read_to_end(&mut unzipped)
+            .unwrap();
+        assert_eq!(
+            unzipped,
+            fs::read(dir.join("aircraft.json")).unwrap(),
+            "the .gz is the same file"
+        );
+        let mut bin = Vec::new();
+        ruzstd::decoding::StreamingDecoder::new(
+            fs::File::open(dir.join("aircraft.binCraft.zst")).unwrap(),
+        )
+        .unwrap()
+        .read_to_end(&mut bin)
+        .unwrap();
+        assert_eq!(bin.len() % bincraft::RECORD_SIZE, 0);
+        assert!(
+            bin.len() / bincraft::RECORD_SIZE > list.len(),
+            "a header and every aircraft"
+        );
+        assert!(
+            dir.join("aircraft.binCraft").exists(),
+            "--write-binCraft-old"
+        );
+        assert!(
+            dir.join("outline.json").exists(),
+            "the outline is due at once"
+        );
+        assert!(
+            !dir.join("stats.json").exists(),
+            "stats.json waits for a closed bucket"
+        );
+
+        // a closed 10 s bucket: stats.json
+        let mut demod = pipe.demod.stats.clone();
+        let mut track = tracker.stats.clone();
+        assert!(recorder.update(T0 + 10_000, &mut demod, &mut track, 0, 0, 0));
+        w.tick(T0 + 10_000, &mut tracker, &pipe, &recorder, true)
+            .unwrap();
+        let stats: serde_json::Value =
+            serde_json::from_slice(&fs::read(dir.join("stats.json")).unwrap()).unwrap();
+        assert_eq!(stats["gain_db"], 29.7);
+        assert!(stats["last1min"]["messages"].as_u64().is_some());
+
+        // the command file: looked at once a second, run once
+        fs::write(dir.join(COMMAND_FILE), "resetRangeOutline\n").unwrap();
+        assert_eq!(
+            w.take_command(T0 + 10_000).as_deref(),
+            Some("resetRangeOutline")
+        );
+        fs::write(dir.join(COMMAND_FILE), "resetRangeOutline\n").unwrap();
+        assert_eq!(
+            w.take_command(T0 + 10_500),
+            None,
+            "not before a second has passed"
+        );
+        assert_eq!(
+            w.take_command(T0 + 11_000).as_deref(),
+            Some("resetRangeOutline")
+        );
+        assert_eq!(w.take_command(T0 + 12_000), None, "and only once");
+
+        // at exit: everything once more
+        fs::remove_file(dir.join("aircraft.json")).unwrap();
+        w.finish(T0 + 12_000, &mut tracker, &pipe, &recorder)
+            .unwrap();
+        assert!(dir.join("aircraft.json").exists());
+        assert!(tmp_files(&dir).is_empty(), "{:?}", tmp_files(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn bincraft_only_leaves_out_aircraft_json() {
+        use openradome_core::track::TrackerConfig;
+        let dir = temp_dir("binonly");
+        let mut tracker = Tracker::new(TrackerConfig::new(None, None, None));
+        let pipe = IqPipeline::new(
+            openradome_core::demod::Demodulator::new(openradome_core::mode_s::Decoder::new(1)),
+            openradome_core::convert::InputFormat::Uc8,
+            1024,
+        );
+        let recorder = StatsRecorder::new(0);
+        let opts = JsonOptions {
+            bin_only: 2,
+            ..JsonOptions::default()
+        };
+        let mut w = JsonWriter::new(&dir, 1_000, 0, &tracker, 1, opts).unwrap();
+        w.tick(1_000, &mut tracker, &pipe, &recorder, false)
+            .unwrap();
+        assert!(!dir.join("aircraft.json").exists());
+        assert!(dir.join("aircraft.binCraft.zst").exists());
+        assert!(
+            !dir.join("outline.json").exists(),
+            "no outline without a position"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

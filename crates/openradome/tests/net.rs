@@ -331,3 +331,101 @@ fn mcp_needs_a_token_file() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--mcp-token-file"));
 }
+
+/// The network inputs fed megabytes of garbage over many connections (bytes of any value,
+/// non-ASCII and over-long raw lines, newline and escape floods, frames cut off mid-way): the
+/// decoder keeps running, nothing panics, and a good frame afterwards still comes through.
+#[test]
+fn network_inputs_survive_garbage() {
+    let _serial = serial();
+    let [ri, bi, ro] = free_ports();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_openradome"))
+        .args([
+            "--net-bind-address",
+            "127.0.0.1",
+            "--net-ri-port",
+            &ri.to_string(),
+            "--net-bi-port",
+            &bi.to_string(),
+            "--net-ro-port",
+            &ro.to_string(),
+            "--quiet",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let mut raw_out = connect(ro);
+    let mut state: u64 = 0x5EED_F00D;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for round in 0..24 {
+        let port = if round % 2 == 0 { ri } else { bi };
+        let mut s = connect(port);
+        let mut junk = Vec::with_capacity(200_000);
+        while junk.len() < 150_000 {
+            match next() % 6 {
+                0 => junk.extend(std::iter::repeat_n(b'\n', (next() % 5000) as usize)),
+                1 => junk.extend(std::iter::repeat_n(0x1a, (next() % 500) as usize)),
+                2 => junk
+                    .extend_from_slice("*0\u{FFFD};\n@0123456789A\u{e9}5D48;\n*+d48;\n".as_bytes()),
+                3 => junk.extend(std::iter::repeat_n(b'8', 6000)), // a raw line too long to keep
+                4 => {
+                    let mut f = vec![0x1a, b'3', 0, 0, 0, 0, 0, 1, 100];
+                    f.extend(hex(IDENT));
+                    f.truncate((next() % f.len() as u64) as usize);
+                    junk.extend(f);
+                }
+                _ => junk.extend((0..(next() % 3000)).map(|_| next() as u8)),
+            }
+        }
+        // a client that vanishes mid-write is normal; the decoder must not care
+        let _ = s.write_all(&junk);
+        if round % 3 == 0 {
+            drop(s);
+        } else {
+            let _ = s.shutdown(std::net::Shutdown::Write);
+        }
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(child.try_wait().unwrap().is_none(), "the decoder exited");
+
+    // the raw output has carried whatever the garbage happened to contain; start afresh
+    raw_out
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut sink = [0u8; 65536];
+    while matches!(raw_out.read(&mut sink), Ok(n) if n > 0) {}
+    raw_out
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+
+    let mut input = connect(ri);
+    input.write_all(format!("*{IDENT};\n").as_bytes()).unwrap();
+    let line = format!("*{IDENT};\n");
+    let mut got = Vec::new();
+    let end = Instant::now() + Duration::from_secs(5);
+    while !String::from_utf8_lossy(&got).contains(&line) && Instant::now() < end {
+        let n = raw_out.read(&mut sink).unwrap_or(0);
+        got.extend_from_slice(&sink[..n]);
+    }
+    assert!(
+        String::from_utf8_lossy(&got).contains(&line),
+        "a good frame still comes through"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut err = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut err)
+        .unwrap();
+    assert!(!err.contains("panicked"), "{err}");
+}

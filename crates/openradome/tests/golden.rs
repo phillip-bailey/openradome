@@ -132,3 +132,71 @@ fn missing_input_is_an_error() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("could not open"));
 }
+
+/// One aircraft record's fields that depend on when the file was written, not on what was decoded:
+/// upstream read the capture in real time (`--throttle`), openradome at full speed.
+/// `seen` (bytes 4..8) and `seen_pos` (108..112), in tenths of a second before "now".
+const BINCRAFT_TIMED: [std::ops::Range<usize>; 2] = [4..8, 108..112];
+
+/// The header's timed fields: `now` (0..8), aircraft with a position (12..16; upstream counts them
+/// every few seconds, so after a 4 s run it still says 0) and the message rate (44..48).
+const BINCRAFT_HEADER_TIMED: [std::ops::Range<usize>; 3] = [0..8, 12..16, 44..48];
+
+#[test]
+fn aircraft_bincraft_matches_upstream_field_by_field() {
+    const SIZE: usize = 112;
+    let cap = &CAPTURES[1];
+    let dir =
+        std::env::temp_dir().join(format!("openradome-golden-bincraft-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    run_capture(cap, &["--write-json", dir.to_str().unwrap(), "--quiet"]);
+    let packed = std::fs::read(dir.join("aircraft.binCraft.zst")).unwrap();
+    let mut got = Vec::new();
+    std::io::Read::read_to_end(
+        &mut ruzstd::decoding::StreamingDecoder::new(packed.as_slice()).unwrap(),
+        &mut got,
+    )
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want = std::fs::read(testdata("flights_uc8.upstream.binCraft")).unwrap();
+
+    let masked = |rec: &[u8], timed: &[std::ops::Range<usize>]| {
+        let mut r = rec.to_vec();
+        for t in timed {
+            r[t.clone()].fill(0);
+        }
+        r
+    };
+    assert_eq!(
+        masked(&got[..SIZE], &BINCRAFT_HEADER_TIMED),
+        masked(&want[..SIZE], &BINCRAFT_HEADER_TIMED),
+        "header (element size, tile, message count, receiver position, version, flags)"
+    );
+    let by_hex = |file: &[u8]| -> std::collections::BTreeMap<u32, Vec<u8>> {
+        file[SIZE..]
+            .as_chunks::<SIZE>()
+            .0
+            .iter()
+            .map(|r| (u32::from_le_bytes(r[..4].try_into().unwrap()), r.to_vec()))
+            .collect()
+    };
+    let (got, want) = (by_hex(&got), by_hex(&want));
+    assert_eq!(
+        got.keys().collect::<Vec<_>>(),
+        want.keys().collect::<Vec<_>>(),
+        "the same aircraft"
+    );
+    assert!(want.len() >= 10, "the capture has its 12 flights");
+    for (hex, w) in &want {
+        let (g, w) = (
+            masked(&got[hex], &BINCRAFT_TIMED),
+            masked(w, &BINCRAFT_TIMED),
+        );
+        let differ: Vec<usize> = (0..SIZE).filter(|&i| g[i] != w[i]).collect();
+        assert!(
+            differ.is_empty(),
+            "{hex:06x}: bytes {differ:?} differ (see tools/bincraft.py for the layout)"
+        );
+    }
+}

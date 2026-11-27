@@ -23,7 +23,7 @@
 # Re-running the script upgrades the binary and keeps the configuration.
 set -euo pipefail
 
-# The repository releases are downloaded from (any GitHub or Gitea repository URL works).
+# The GitHub repository releases are downloaded from.
 DEFAULT_REPO_URL="https://github.com/phillip-bailey/openradome"
 REPO_URL="${OPENRADOME_REPO_URL:-${RUSTADSB_REPO_URL:-$DEFAULT_REPO_URL}}"
 VERSION="${OPENRADOME_VERSION:-${RUSTADSB_VERSION:-latest}}"
@@ -44,7 +44,7 @@ OLD_UNIT=/etc/systemd/system/rustadsb.service
 OLD_USER=rustadsb
 
 LAT="" LON="" GAIN="49.6" JSON_DIR="/run/openradome" BIND="0.0.0.0" ARCHIVE="" REPLACE=0 UNINSTALL=0 PURGE=0 START=1
-ROLLBACK=0 TOKEN="${OPENRADOME_TOKEN:-${RUSTADSB_TOKEN:-}}" DASHBOARD_PORT="" MIGRATE=0 MCP_PORT=""
+ROLLBACK=0 DASHBOARD_PORT="" MIGRATE=0 MCP_PORT=""
 
 usage() {
   sed -n '2,23p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
@@ -64,9 +64,9 @@ Options:
   --no-start            install everything but do not start the service
   --rollback            put the previous binary (openradome.prev) back and restart
   --uninstall [--purge] remove the service and binary (--purge also removes the configuration and user)
-Environment: OPENRADOME_REPO_URL (default $REPO_URL), OPENRADOME_VERSION, OPENRADOME_TOKEN (for a private
-Gitea release page: sent as an Authorization header). From a private GitHub repository, download the
-archive and SHA256SUMS with `gh release download` and use --archive.
+Environment: OPENRADOME_REPO_URL (a https://github.com/OWNER/REPO URL; default $REPO_URL), OPENRADOME_VERSION.
+From a private GitHub repository, download the archive and SHA256SUMS with "gh release download" and use
+--archive.
 EOF
 }
 
@@ -172,11 +172,11 @@ fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-fetch() { # url dest
+fetch() { # url dest; https only, redirects included (GitHub sends downloads on to its file servers)
   if command -v curl >/dev/null; then
-    if [ -n "$TOKEN" ]; then curl -fsSL -H "Authorization: token $TOKEN" -o "$2" "$1"; else curl -fsSL -o "$2" "$1"; fi
+    curl -fsSL --proto '=https' --proto-redir '=https' -o "$2" "$1"
   elif command -v wget >/dev/null; then
-    if [ -n "$TOKEN" ]; then wget -q --header="Authorization: token $TOKEN" -O "$2" "$1"; else wget -qO "$2" "$1"; fi
+    wget -q --https-only -O "$2" "$1"
   else die "need curl or wget"; fi
 }
 
@@ -188,11 +188,12 @@ if [ -n "$ARCHIVE" ]; then
   if [ -f "$SUMS" ]; then cp "$SUMS" "$TMP/SHA256SUMS"; else echo "warning: no SHA256SUMS next to the archive; not checked" >&2; fi
 else
   [ -n "$REPO_URL" ] || die "no repository to download from: set OPENRADOME_REPO_URL, or use --archive"
+  case "$REPO_URL" in
+    https://github.com/?*/?*) REPO_URL="${REPO_URL%/}" ;;
+    *) die "OPENRADOME_REPO_URL must be a GitHub repository (https://github.com/OWNER/REPO), not $REPO_URL" ;;
+  esac
   if [ "$VERSION" = latest ]; then
-    case "$REPO_URL" in
-      https://github.com/*) API="https://api.github.com/repos/${REPO_URL#https://github.com/}/releases/latest" ;;
-      *) API="$(printf '%s' "$REPO_URL" | sed -E 's#^(https?://[^/]+)/(.*)$#\1/api/v1/repos/\2#')/releases/latest" ;;
-    esac
+    API="https://api.github.com/repos/${REPO_URL#https://github.com/}/releases/latest"
     fetch "$API" "$TMP/latest.json" || die "could not ask $REPO_URL for the latest release (set --version)"
     VERSION=$(grep -oE '"tag_name": *"[^"]+"' "$TMP/latest.json" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
     [ -n "$VERSION" ] || die "no release found at $REPO_URL"

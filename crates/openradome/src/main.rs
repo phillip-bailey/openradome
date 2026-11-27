@@ -231,6 +231,7 @@ fn run(cli: &Cli) -> Result<(), String> {
                 startup,
                 !net_only,
                 jsonout::VERSION_STRING,
+                cli.dashboard_host.clone(),
             )
             .map_err(|e| format!("can't listen for the dashboard on {listen:?}: {e}"))?,
         );

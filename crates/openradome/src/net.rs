@@ -3,10 +3,10 @@
 //! engine runs on its own thread and talks to this module through a [`Hub`] (outgoing) and a
 //! channel of [`WireItem`]s (incoming).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::net::{IpAddr, SocketAddr, TcpListener as StdListener};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -70,6 +70,113 @@ pub fn clients() -> Vec<ClientInfo> {
         .values()
         .cloned()
         .collect()
+}
+
+/// At most this many clients on the data ports at once, all ports together. Each holds a file
+/// descriptor, and running out (the usual limit is 1024 a process) would stop every listener and
+/// every file the decoder writes.
+const MAX_CLIENTS: usize = 512;
+/// At most this many from one address other than this computer's own, so one host can't take every
+/// slot. Feed and MLAT clients on this computer all come from 127.0.0.1, so loopback has no limit
+/// of its own.
+const MAX_CLIENTS_PER_HOST: usize = 32;
+/// After a failed accept (out of file descriptors, say) wait this long: retrying at once would
+/// spin a core and starve everything else on the runtime.
+const ACCEPT_RETRY: Duration = Duration::from_millis(250);
+
+#[derive(Default)]
+struct Slots {
+    total: usize,
+    by_host: HashMap<IpAddr, usize>,
+}
+
+/// A cap on open connections: so many in all, and so many from one address other than this
+/// computer's own (loopback has only the overall cap: local feed and MLAT clients share it).
+pub struct ClientLimit {
+    max: usize,
+    per_host: usize,
+    slots: Mutex<Slots>,
+}
+
+impl ClientLimit {
+    pub fn new(max: usize, per_host: usize) -> Arc<Self> {
+        Arc::new(Self {
+            max,
+            per_host,
+            slots: Mutex::default(),
+        })
+    }
+
+    /// A place for a client from `ip`, if there is one; given back when the slot is dropped.
+    pub fn take(self: &Arc<Self>, ip: IpAddr) -> Option<ClientSlot> {
+        let ip = ip.to_canonical();
+        let mut s = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        let from_host = s.by_host.get(&ip).copied().unwrap_or(0);
+        if s.total >= self.max || (!ip.is_loopback() && from_host >= self.per_host) {
+            return None;
+        }
+        s.total += 1;
+        *s.by_host.entry(ip).or_default() += 1;
+        Some(ClientSlot {
+            limit: self.clone(),
+            ip,
+        })
+    }
+}
+
+pub struct ClientSlot {
+    limit: Arc<ClientLimit>,
+    ip: IpAddr,
+}
+
+impl Drop for ClientSlot {
+    fn drop(&mut self) {
+        let mut s = self.limit.slots.lock().unwrap_or_else(|e| e.into_inner());
+        s.total = s.total.saturating_sub(1);
+        if let Some(n) = s.by_host.get_mut(&self.ip) {
+            *n -= 1;
+            if *n == 0 {
+                s.by_host.remove(&self.ip);
+            }
+        }
+    }
+}
+
+static DATA_CLIENTS: LazyLock<Arc<ClientLimit>> =
+    LazyLock::new(|| ClientLimit::new(MAX_CLIENTS, MAX_CLIENTS_PER_HOST));
+static NEXT_ACCEPT_LOG: AtomicI64 = AtomicI64::new(0);
+
+/// Say so, but at most once a minute: a flood must not fill the log too.
+fn log_accept_problem(msg: impl FnOnce() -> String) {
+    let now = now_ms();
+    let next = NEXT_ACCEPT_LOG.load(Ordering::Relaxed);
+    if now >= next
+        && NEXT_ACCEPT_LOG
+            .compare_exchange(next, now + 60_000, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        eprintln!("{}", msg());
+    }
+}
+
+/// The next client within the limits. Clients over them are closed at once.
+async fn accept_client(listener: &TcpListener, port: u16) -> (TcpStream, SocketAddr, ClientSlot) {
+    loop {
+        match listener.accept().await {
+            Ok((sock, peer)) => match DATA_CLIENTS.take(peer.ip()) {
+                Some(slot) => return (sock, peer, slot),
+                None => log_accept_problem(|| {
+                    format!(
+                        "net: port {port}: too many clients ({MAX_CLIENTS} in all, {MAX_CLIENTS_PER_HOST} from one host); refusing {peer} and others"
+                    )
+                }),
+            },
+            Err(e) => {
+                log_accept_problem(|| format!("net: port {port}: accept failed: {e}"));
+                tokio::time::sleep(ACCEPT_RETRY).await;
+            }
+        }
+    }
 }
 
 pub const BEAST_HEARTBEAT: [u8; 11] = [0x1a, b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -448,9 +555,7 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
             let (sender, heartbeat, interval) = (sender.clone(), heartbeat.clone(), cfg.heartbeat);
             tokio::spawn(async move {
                 loop {
-                    let Ok((sock, peer)) = listener.accept().await else {
-                        continue;
-                    };
+                    let (sock, peer, slot) = accept_client(&listener, port).await;
                     set_sockopts(&sock);
                     let guard = register_client(format!("{name} :{port}"), peer.to_string(), false);
                     let served = serve_output(
@@ -463,7 +568,7 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
                         peer.to_string(),
                     );
                     tokio::spawn(async move {
-                        let _guard = guard;
+                        let _guard = (guard, slot);
                         served.await
                     });
                 }
@@ -482,14 +587,12 @@ pub fn spawn(rt: &Handle, cfg: &NetConfig, hub: &Hub, tx: &SyncSender<WireItem>)
             let tx = tx.clone();
             tokio::spawn(async move {
                 loop {
-                    let Ok((sock, peer)) = listener.accept().await else {
-                        continue;
-                    };
+                    let (sock, peer, slot) = accept_client(&listener, port).await;
                     set_sockopts(&sock);
                     let guard = register_client(format!("{name} :{port}"), peer.to_string(), false);
                     let served = serve_input(sock, beast, tx.clone(), None);
                     tokio::spawn(async move {
-                        let _guard = guard;
+                        let _guard = (guard, slot);
                         served.await
                     });
                 }
@@ -966,9 +1069,13 @@ async fn serve_input(
             }
         } else {
             lines.extend_from_slice(&buf[..n]);
-            while let Some(end) = lines.iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = lines.drain(..=end).collect();
-                if let Some(raw) = parse_raw_line(&String::from_utf8_lossy(&line)) {
+            // walk the lines, then drop them all at once (one drain per line would move the rest
+            // of the buffer each time: a read of nothing but newlines would cost its square)
+            let mut start = 0;
+            while let Some(len) = lines[start..].iter().position(|&b| b == b'\n') {
+                let line = &lines[start..start + len];
+                start += len + 1;
+                if let Some(raw) = std::str::from_utf8(line).ok().and_then(parse_raw_line) {
                     offer(
                         &tx,
                         WireItem {
@@ -981,6 +1088,7 @@ async fn serve_input(
                     );
                 }
             }
+            lines.drain(..start);
             // a client that never sends newlines must not grow the buffer without bound
             if lines.len() > 4096 {
                 lines.clear();
@@ -992,6 +1100,30 @@ async fn serve_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_host_cannot_take_every_client_slot() {
+        // TEST-NET addresses, used by no other test
+        let limit = ClientLimit::new(5, 2);
+        let host: IpAddr = "192.0.2.77".parse().unwrap();
+        let a = limit.take(host).expect("within the limit");
+        let _b = limit.take(host).expect("within the limit");
+        assert!(
+            limit.take(host).is_none(),
+            "one over the limit for one host"
+        );
+        let mapped: IpAddr = "::ffff:192.0.2.77".parse().unwrap();
+        assert!(limit.take(mapped).is_none(), "the same host over IPv6");
+        let _c = limit
+            .take("192.0.2.78".parse().unwrap())
+            .expect("another host");
+        let local: IpAddr = "127.0.0.1".parse().unwrap();
+        let _d = limit.take(local).expect("loopback: no per-host limit");
+        let _e = limit.take(local).expect("loopback: no per-host limit");
+        assert!(limit.take(local).is_none(), "the overall limit");
+        drop(a);
+        assert!(limit.take(host).is_some(), "slots come back");
+    }
 
     #[test]
     fn connector_parsing() {

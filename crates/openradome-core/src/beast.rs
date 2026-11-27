@@ -128,16 +128,21 @@ pub struct RawLine {
 /// Parse one line of the raw format. Returns `None` for blank, comment or malformed lines.
 pub fn parse_raw_line(line: &str) -> Option<RawLine> {
     let line = line.trim();
+    // hex digits only below: slicing by byte position is then safe, and `from_str_radix` can't
+    // take a sign
+    if !line.is_ascii() {
+        return None;
+    }
     let (timestamp, rest) = match line.chars().next()? {
         '*' => (None, &line[1..]),
-        '@' if line.len() > 13 => (
+        '@' if line.len() > 13 && line[1..13].bytes().all(|b| b.is_ascii_hexdigit()) => (
             Some(i64::from_str_radix(&line[1..13], 16).ok()?),
             &line[13..],
         ),
         _ => return None,
     };
     let hex = rest.strip_suffix(';')?;
-    if !matches!(hex.len(), 4 | 14 | 28) {
+    if !matches!(hex.len(), 4 | 14 | 28) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let data = (0..hex.len() / 2)
@@ -289,6 +294,17 @@ mod tests {
         assert!(parse_raw_line("*zz4840d6202cc371c32ce0576098;").is_none());
         assert!(parse_raw_line("hello").is_none());
         assert!(parse_raw_line("").is_none());
+    }
+
+    #[test]
+    fn raw_lines_that_are_not_ascii_or_hex_are_refused_without_a_panic() {
+        // each of these used to slice through a multi-byte character, or parse a sign
+        assert!(parse_raw_line("*0\u{FFFD};").is_none());
+        assert!(parse_raw_line("*\u{e9}840d6202cc371c32ce0576098;").is_none());
+        assert!(parse_raw_line("@0123456789A\u{FFFD}5D4840D6000000;").is_none());
+        assert!(parse_raw_line("@+123456789AB5D4840D6000000;").is_none());
+        assert!(parse_raw_line("*+d4840d6202cc371c32ce0576098;").is_none());
+        assert!(parse_raw_line("*+d48;").is_none());
     }
 
     #[test]

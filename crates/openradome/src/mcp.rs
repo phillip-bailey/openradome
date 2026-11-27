@@ -38,6 +38,9 @@ const MIN_TOKEN: usize = 32;
 const HEAD_MAX: usize = 16 * 1024;
 const BODY_MAX: usize = 256 * 1024;
 const MAX_CONNECTIONS: usize = 32;
+/// ... and from one address other than this computer's own, so one LAN host can't lock out the
+/// real client.
+const MAX_CONNECTIONS_PER_HOST: usize = 8;
 /// A connection with no complete request this long is closed without a word.
 const IDLE: Duration = Duration::from_secs(30);
 const HANDSHAKE: Duration = Duration::from_secs(10);
@@ -160,14 +163,14 @@ impl Mcp {
             tls,
         });
         let s = shared.clone();
-        let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+        let slots = net::ClientLimit::new(MAX_CONNECTIONS, MAX_CONNECTIONS_PER_HOST);
         rt.spawn(async move {
             loop {
                 let Ok((sock, peer)) = listener.accept().await else {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 };
-                let Ok(slot) = slots.clone().try_acquire_owned() else {
+                let Some(slot) = slots.take(peer.ip()) else {
                     continue; // too many open: drop this one
                 };
                 let _ = sock.set_nodelay(true);
@@ -187,6 +190,11 @@ impl Mcp {
                 });
             }
         });
+        if settings.tls.is_none() && !addr.ip().is_loopback() {
+            eprintln!(
+                "openradome: MCP: warning: plain HTTP on {addr}: the token crosses the network unencrypted; give --mcp-tls-cert and --mcp-tls-key, or listen on 127.0.0.1"
+            );
+        }
         eprintln!(
             "openradome: MCP server on {}://{addr}/mcp",
             if settings.tls.is_some() {
@@ -372,6 +380,8 @@ impl Response {
 async fn read_request<S: AsyncRead + Unpin>(
     io: &mut S,
     buf: &mut Vec<u8>,
+    shared: &Shared,
+    peer: SocketAddr,
 ) -> Result<Option<Request>, Response> {
     let mut chunk = [0u8; 4096];
     let head_end = loop {
@@ -415,6 +425,15 @@ async fn read_request<S: AsyncRead + Unpin>(
     if len > BODY_MAX {
         return Err(closing("413 Content Too Large"));
     }
+    // without the token, nothing more is read: a body is up to BODY_MAX to hold
+    let auth = headers
+        .iter()
+        .find(|(n, _)| n == "authorization")
+        .map(|(_, v)| v.as_str());
+    let from_page = headers.iter().any(|(n, _)| n == "origin"); // refused later, with its own reason
+    if path == "/mcp" && !from_page && !token_ok(auth, &shared.token) {
+        return Err(refusal(shared, peer));
+    }
     while buf.len() < head_end + len {
         match io.read(&mut chunk).await {
             Ok(0) | Err(_) => return Ok(None),
@@ -434,15 +453,16 @@ async fn read_request<S: AsyncRead + Unpin>(
 async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut io: S, shared: &Shared, peer: SocketAddr) {
     let mut buf = Vec::with_capacity(4096);
     loop {
-        let req = match tokio::time::timeout(IDLE, read_request(&mut io, &mut buf)).await {
-            Ok(Ok(Some(r))) => r,
-            Ok(Err(resp)) => {
-                let _ = io.write_all(&encode(&resp)).await;
-                let _ = io.shutdown().await;
-                return;
-            }
-            _ => return, // closed, idle or timed out: nothing written
-        };
+        let req =
+            match tokio::time::timeout(IDLE, read_request(&mut io, &mut buf, shared, peer)).await {
+                Ok(Ok(Some(r))) => r,
+                Ok(Err(resp)) => {
+                    let _ = io.write_all(&encode(&resp)).await;
+                    let _ = io.shutdown().await;
+                    return;
+                }
+                _ => return, // closed, idle or timed out: nothing written
+            };
         let wants_close = req
             .header("connection")
             .is_some_and(|v| v.eq_ignore_ascii_case("close"));
@@ -474,6 +494,42 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// Does an `Authorization` header carry the token?
+fn token_ok(auth: Option<&str>, token: &[u8]) -> bool {
+    let given = auth
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
+        .unwrap_or("")
+        .trim();
+    same(given.as_bytes(), token)
+}
+
+/// 401, logged at most once a minute. The connection is closed, so each guess costs a new one.
+fn refusal(shared: &Shared, peer: SocketAddr) -> Response {
+    let n = shared.refused.fetch_add(1, Ordering::Relaxed) + 1;
+    let now = net::now_ms();
+    let due = shared.refused_log.load(Ordering::Relaxed);
+    if now >= due
+        && shared
+            .refused_log
+            .compare_exchange(due, now + 60_000, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        eprintln!(
+            "openradome: MCP: refused a request without the right token from {} ({n} so far)",
+            peer.ip()
+        );
+    }
+    let mut r = Response::empty(
+        "401 Unauthorized",
+        "WWW-Authenticate: Bearer realm=\"openradome\"\r\n",
+    );
+    r.close = true;
+    r
+}
+
 async fn respond(req: &Request, shared: &Shared, peer: SocketAddr) -> Response {
     if req.path != "/mcp" {
         return Response::json(
@@ -487,33 +543,8 @@ async fn respond(req: &Request, shared: &Shared, peer: SocketAddr) -> Response {
             &json!({"error": "requests from web pages are refused"}),
         );
     }
-    let given = req
-        .header("authorization")
-        .and_then(|v| {
-            v.strip_prefix("Bearer ")
-                .or_else(|| v.strip_prefix("bearer "))
-        })
-        .unwrap_or("")
-        .trim();
-    if !same(given.as_bytes(), &shared.token) {
-        let n = shared.refused.fetch_add(1, Ordering::Relaxed) + 1;
-        let now = net::now_ms();
-        let due = shared.refused_log.load(Ordering::Relaxed);
-        if now >= due
-            && shared
-                .refused_log
-                .compare_exchange(due, now + 60_000, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-        {
-            eprintln!(
-                "openradome: MCP: refused a request without the right token from {} ({n} so far)",
-                peer.ip()
-            );
-        }
-        return Response::empty(
-            "401 Unauthorized",
-            "WWW-Authenticate: Bearer realm=\"openradome\"\r\n",
-        );
+    if !token_ok(req.header("authorization"), &shared.token) {
+        return refusal(shared, peer);
     }
     match req.method.as_str() {
         "POST" => match rpc(&req.body, shared).await {
@@ -737,7 +768,9 @@ async fn want(shared: &Shared) {
 
 async fn fresh_aircraft(shared: &Shared, query: &str) -> Result<Value, String> {
     want(shared).await;
-    let q = api::parse_query(query).ok_or_else(|| format!("not a valid query: {query}"))?;
+    // the query is not echoed: it can hold the station's position
+    let q = api::parse_query(query)
+        .ok_or_else(|| "not a valid query: check the numbers given".to_string())?;
     let snap = shared
         .snapshot
         .lock()
@@ -780,6 +813,9 @@ fn query_string(args: &Value, home: Option<(f64, f64)>) -> Result<String, String
         Ok(v.to_string())
     };
     let radius = num("radius_nm").unwrap_or(25.0);
+    if !(radius.is_finite() && radius >= 0.0) {
+        return Err("radius_nm must be 0 or more".into());
+    }
     Ok(match text("query") {
         "closest" => {
             let (a, o) = centre()?;

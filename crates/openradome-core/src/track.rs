@@ -12,7 +12,7 @@
 //! position inference (`receiver.c`; give `--lat/--lon` instead), Mode A/C matching to
 //! aircraft, JAERO/SBS sources, per-receiver bookkeeping for network ingest.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::cpr;
 use crate::geo::{
@@ -923,6 +923,10 @@ impl RangeOutline {
     }
 }
 
+/// The most aircraft the table holds: far above any receiver's real traffic (a busy station sees
+/// hundreds; each entry is about 2 kB), so only forged addresses can reach it.
+pub const MAX_AIRCRAFT: usize = 50_000;
+
 /// The aircraft table.
 #[derive(Debug)]
 pub struct Tracker {
@@ -933,7 +937,11 @@ pub struct Tracker {
     aircraft: HashMap<u32, Aircraft>,
     /// Aircraft worth listing in `aircraft.json`, in the order they became active.
     active: Vec<u32>,
+    /// The same addresses, to look one up without a scan on every message.
+    active_set: HashSet<u32>,
     next_remove_stale: i64,
+    /// New aircraft not added because the table was full ([`MAX_AIRCRAFT`]).
+    pub refused_table_full: u64,
     /// Mode A/C reply counters (the ident bit is ignored), indexed by `mode_a_to_index`.
     pub mode_ac_count: Vec<u32>,
 }
@@ -946,7 +954,9 @@ impl Tracker {
             outline: None,
             aircraft: HashMap::new(),
             active: Vec::new(),
+            active_set: HashSet::new(),
             next_remove_stale: 0,
+            refused_table_full: 0,
             mode_ac_count: vec![0; 4096],
         }
     }
@@ -1033,6 +1043,7 @@ impl Tracker {
                 None => true,
             };
             if drop {
+                self.active_set.remove(&addr);
                 self.active.swap_remove(i);
             } else {
                 i += 1;
@@ -1095,8 +1106,14 @@ impl Tracker {
 
         let addr = mm.addr;
         let cfg = self.cfg.clone();
+        let full = self.aircraft.len() >= MAX_AIRCRAFT;
         let a = match self.aircraft.entry(addr) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(_) if mm.address_reliable && full => {
+                // full: forged addresses (a CRC is easy to compute) must not exhaust memory
+                self.refused_table_full += 1;
+                return None;
+            }
             std::collections::hash_map::Entry::Vacant(e) if mm.address_reliable => {
                 e.insert(Aircraft::new(addr))
             }
@@ -1105,7 +1122,14 @@ impl Tracker {
 
         // Messages with a position get processed on a scratch copy; if the position turns
         // out to be bad, duplicate or garbage everything is reverted.
-        let scratch = mm.cpr.is_some().then(|| a.clone());
+        // The trace stays out of the copy: it can hold 40,000 points, and it only changes once a
+        // position is accepted (`set_position`), after every check that could revert it.
+        let scratch = mm.cpr.is_some().then(|| {
+            let trace = std::mem::take(&mut a.trace);
+            let copy = a.clone();
+            a.trace = trace;
+            copy
+        });
 
         // only count the aircraft as "seen" for reliable messages with CRC
         if mm.address_reliable {
@@ -1829,9 +1853,10 @@ impl Tracker {
             mm.reduce_forward = true;
         }
 
-        if let Some(scratch) = scratch
+        if let Some(mut scratch) = scratch
             && (mm.pos_bad || mm.duplicate)
         {
+            scratch.trace = std::mem::take(&mut a.trace);
             *a = scratch;
         }
 
@@ -1846,13 +1871,14 @@ impl Tracker {
         // put it on the active list once it is worth showing
         let include = {
             let a = &*a;
-            !self.active.contains(&addr) && Self::include_in_json(now, a)
+            !self.active_set.contains(&addr) && Self::include_in_json(now, a)
         };
         if include {
             if let Some(a) = self.aircraft.get_mut(&addr) {
                 a.update_validities(now);
             }
             self.active.push(addr);
+            self.active_set.insert(addr);
         }
         Some(addr)
     }

@@ -281,6 +281,12 @@ it answers `GET` for `/` and nothing else changes anything. It listens on `--das
 (`--net-bind-address 127.0.0.1`) can still show the page on the LAN with `--dashboard-bind-address 0.0.0.0` (or the
 Pi's LAN address). There is no password, so do not expose the port to the internet.
 
+It answers requests for an IP address, `localhost`, a name without a dot (`raspberrypi`) or a name under `.local`,
+`.lan`, `.home.arpa` or `.internal`. Any other name gets 403 Forbidden, so a web page on someone else's domain
+can't read the dashboard by pointing that domain at your LAN (DNS rebinding). If you reach it by another name,
+such as through a reverse proxy, add it with `--dashboard-host adsb.example.org` (repeatable; in the TOML file
+`dashboard-host = ["adsb.example.org"]`).
+
 ## MCP server
 
 An optional [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI assistant (Claude Code

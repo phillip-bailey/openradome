@@ -529,10 +529,19 @@ Pi next to OpenRadome. The same input goes through both programs and the outputs
 | same capture | `outline.json` | byte-identical |
 | same capture, `--write-state`; each decoder restarted from the other's `rangeDirs.gz` | `outline.json` (240 points) | identical in both directions |
 
-`cargo test` repeats the decoding comparison on every run, on two synthetic captures from `examples/synth_iq.rs`:
-`testdata/synth_uc8.bin` (random frames) and `testdata/flights_uc8.bin` (3 s of 12 simulated flights with bit
-errors, overlaps and bad positions), each compared with upstream's output for the same file. The recordings in the
-table above were made at the author's station and are not in the repository.
+`cargo test` repeats the decoding comparison on every run, on three synthetic captures from `examples/synth_iq.rs`:
+`testdata/synth_uc8.bin` (random frames), `testdata/flights_uc8.bin` (3 s of 12 simulated flights with bit
+errors, overlaps and bad positions) and `testdata/squawk_uc8.bin` (10 flights that also send squawks, emergency
+codes among them). Each is compared with upstream's output for the same file: the decoded messages, the
+statistics, and for the two flight captures `aircraft.binCraft` field by field. `tools/regen-golden.sh` makes the
+upstream files. The recordings in the table above were made at the author's station and are not in the
+repository.
+
+The tests also fuzz every decoder that takes outside input (`crates/openradome-core/tests/fuzz.rs`): radio frames
+with valid CRCs, mutated real frames, Comm-B registers, IQ samples, Beast and raw streams and API queries, through
+the tracker and every output format, checking that nothing panics, the JSON stays valid and memory stays bounded.
+`cargo test` runs a short round; `make fuzz FUZZ_ITERS=50000000` a long one. `make coverage` reports the line
+coverage (about 90 %).
 
 ## Performance
 

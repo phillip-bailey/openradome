@@ -38,11 +38,27 @@ fn connect(port: u16) -> TcpStream {
     }
 }
 
+/// Stop the decoder as systemd or Ctrl-C does (SIGINT), so it shuts down cleanly (and writes its
+/// coverage data when measured); kill it only if it hasn't gone within 5 s.
+fn interrupt(child: &mut Child) {
+    let _ = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status();
+    let end = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < end {
+        if let Ok(Some(_)) = child.try_wait() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 struct Server(Child);
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        interrupt(&mut self.0);
     }
 }
 
@@ -418,8 +434,7 @@ fn network_inputs_survive_garbage() {
         "a good frame still comes through"
     );
 
-    let _ = child.kill();
-    let _ = child.wait();
+    interrupt(&mut child);
     let mut err = String::new();
     child
         .stderr
@@ -428,4 +443,199 @@ fn network_inputs_survive_garbage() {
         .read_to_string(&mut err)
         .unwrap();
     assert!(!err.contains("panicked"), "{err}");
+}
+
+// ---- connectors: the decoder connecting out, as feed clients do -----------------------------------
+
+/// The next connection to `l` within `secs`, or a panic saying what was waited for.
+fn accept_within(l: &TcpListener, secs: u64, what: &str) -> TcpStream {
+    l.set_nonblocking(true).unwrap();
+    let end = Instant::now() + Duration::from_secs(secs);
+    loop {
+        match l.accept() {
+            Ok((s, _)) => {
+                s.set_nonblocking(false).unwrap();
+                s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                return s;
+            }
+            Err(_) if Instant::now() < end => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => panic!("no connection for {what} within {secs} s: {e}"),
+        }
+    }
+}
+
+/// Read until `want` turns up in what has arrived (or panic after 5 s).
+fn read_until_seen(s: &mut TcpStream, want: &[u8]) -> Vec<u8> {
+    let mut got = Vec::new();
+    let mut buf = [0u8; 4096];
+    let end = Instant::now() + Duration::from_secs(5);
+    while !got.windows(want.len()).any(|w| w == want) {
+        assert!(Instant::now() < end, "never saw {want:02x?} in {got:02x?}");
+        match s.read(&mut buf) {
+            Ok(0) => panic!("closed before {want:02x?} came"),
+            Ok(n) => got.extend_from_slice(&buf[..n]),
+            Err(_) => {}
+        }
+    }
+    got
+}
+
+fn spawn(args: &[String]) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_openradome"))
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn")
+}
+
+/// Stop the decoder and return what it printed.
+fn stop(mut child: Child) -> String {
+    interrupt(&mut child);
+    let mut err = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut err)
+        .unwrap();
+    err
+}
+
+const UUID: &str = "0123456789abcdef0123456789abcdef";
+
+/// beast_reduce_plus_out to an aggregator, as the adsb.lol and similar feed clients do: the dead
+/// main address is skipped for the fallback, the UUID goes first, then the paced frames; after
+/// the aggregator hangs up the decoder says so and connects again.
+#[test]
+fn feeding_an_aggregator_with_uuid_fallback_and_reconnect() {
+    let _serial = serial();
+    let [ri, dead] = free_ports();
+    let agg = TcpListener::bind("127.0.0.1:0").unwrap();
+    let a = agg.local_addr().unwrap().port();
+    let child = spawn(&[
+        "--net-only".into(),
+        "--net-bind-address".into(),
+        "127.0.0.1".into(),
+        "--net-ri-port".into(),
+        ri.to_string(),
+        "--net-connector".into(),
+        format!("127.0.0.1,{dead},beast_reduce_plus_out,127.0.0.1,{a},uuid={UUID}"),
+        "--net-connector-delay".into(),
+        "0.2".into(),
+        "--net-beast-reduce-interval".into(),
+        "0.1".into(),
+        "--quiet".into(),
+    ]);
+    let mut feed = accept_within(&agg, 10, "the fallback address");
+    let mut preamble = [0u8; 41];
+    feed.read_exact(&mut preamble).unwrap();
+    assert_eq!(&preamble[..2], &[0x1a, 0xe4], "the UUID frame first");
+    assert_eq!(&preamble[2..34], UUID.as_bytes());
+
+    let mut input = connect(ri);
+    for _ in 0..3 {
+        input.write_all(format!("*{IDENT};\n").as_bytes()).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    read_until_seen(&mut feed, &hex(IDENT));
+
+    // the aggregator hangs up: the decoder reconnects, UUID first again
+    drop(feed);
+    let mut again = accept_within(&agg, 10, "the reconnection");
+    let mut preamble = [0u8; 2];
+    again.read_exact(&mut preamble).unwrap();
+    assert_eq!(preamble, [0x1a, 0xe4]);
+    drop(again);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let err = stop(child);
+    assert!(
+        err.contains(&format!("127.0.0.1:{dead}: connection failed")),
+        "{err}"
+    );
+    assert!(err.contains("disconnected after"), "{err}");
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+/// A beast_in connector (pulling from another decoder): frames are decoded; a server that goes
+/// silent for two heartbeat intervals is dropped and connected to again.
+#[test]
+fn pulling_beast_from_a_server_that_goes_quiet() {
+    let _serial = serial();
+    let [ro] = free_ports();
+    let src = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = src.local_addr().unwrap().port();
+    let child = spawn(&[
+        "--net-only".into(),
+        "--net-bind-address".into(),
+        "127.0.0.1".into(),
+        "--net-ro-port".into(),
+        ro.to_string(),
+        "--net-connector".into(),
+        format!("127.0.0.1,{port},beast_in"),
+        "--net-heartbeat".into(),
+        "0.5".into(),
+        "--net-connector-delay".into(),
+        "0.2".into(),
+        "--quiet".into(),
+    ]);
+    let mut raw = connect(ro);
+    let mut server = accept_within(&src, 10, "the beast_in connector");
+    std::thread::sleep(Duration::from_millis(200));
+    let mut frame = vec![0x1a, b'3', 0, 0, 0, 0, 0, 1, 100];
+    frame.extend(hex(IDENT));
+    server.write_all(&frame).unwrap();
+    read_until_seen(&mut raw, format!("*{IDENT};").as_bytes());
+    // now nothing at all: after 2 x 0.5 s it is dropped and a new connection comes
+    let started = Instant::now();
+    let _second = accept_within(&src, 10, "the reconnection after silence");
+    assert!(
+        started.elapsed() >= Duration::from_millis(800),
+        "dropped too soon"
+    );
+    drop(server);
+    let err = stop(child);
+    assert!(!err.contains("panicked"), "{err}");
+}
+
+/// raw_out and sbs_out connectors push to a server; uat_in connectors are skipped with a word.
+#[test]
+fn pushing_raw_and_sbs_and_skipping_uat() {
+    let _serial = serial();
+    let [ri] = free_ports();
+    let raw_srv = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sbs_srv = TcpListener::bind("127.0.0.1:0").unwrap();
+    let (rp, sp) = (
+        raw_srv.local_addr().unwrap().port(),
+        sbs_srv.local_addr().unwrap().port(),
+    );
+    let child = spawn(&[
+        "--net-only".into(),
+        "--net-bind-address".into(),
+        "127.0.0.1".into(),
+        "--net-ri-port".into(),
+        ri.to_string(),
+        "--net-connector".into(),
+        format!("127.0.0.1,{rp},raw_out"),
+        "--net-connector".into(),
+        format!("127.0.0.1,{sp},sbs_out"),
+        "--net-connector".into(),
+        "127.0.0.1,30978,uat_in".into(),
+        "--quiet".into(),
+    ]);
+    let mut raw = accept_within(&raw_srv, 10, "raw_out");
+    let mut sbs = accept_within(&sbs_srv, 10, "sbs_out");
+    std::thread::sleep(Duration::from_millis(200));
+    let mut input = connect(ri);
+    input
+        .write_all(format!("*{IDENT};\n*{IDENT};\n").as_bytes())
+        .unwrap();
+    read_until_seen(&mut raw, format!("*{IDENT};\n").as_bytes());
+    read_until_seen(&mut sbs, b"MSG,1,1,1,4840D6");
+    let err = stop(child);
+    assert!(
+        err.contains("uat_in (978 MHz UAT) is not supported"),
+        "{err}"
+    );
 }

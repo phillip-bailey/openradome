@@ -8,6 +8,9 @@
 #   synth_uc8.bin  synthetic frames from examples/synth_iq.rs; default flags
 #   flights_uc8.bin  3 s of simulated traffic from examples/synth_iq.rs:
 #                  --flights 12 --seconds 3 --ground 20 --glitch 5 --flip 5 --overlap 5 --seed 7
+#   squawk_uc8.bin   3 s of 10 flights that also answer identity requests (DF5 squawks):
+#                  --flights 10 --seconds 3 --squawks 100 --flip 3 --seed 11
+#   Both with --fix --lat 52.0 --lon 4.0 --max-range 450.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 cd "$here/testdata"
@@ -29,15 +32,23 @@ gen() {
   wc -l "$name.upstream.raw" "$name.upstream.stats"
 }
 
-gen synth_uc8
-gen flights_uc8 --fix --lat 52.0 --lon 4.0 --max-range 450
+# aircraft.binCraft at the end of a capture. --throttle: at full speed upstream reads a 3 s file
+# in a few ms and writes no aircraft (it times them by the clock). Stored uncompressed.
+bincraft() {
+  local name=$1
+  shift
+  local json
+  json=$(mktemp -d)
+  docker run --rm -v "$PWD":/data -v "$json":/json openradome-upstream --device-type ifile \
+    --ifile "/data/$name.bin" --throttle "$@" --write-json /json --quiet 2>/dev/null || true
+  zstd -dc "$json/aircraft.binCraft.zst" >"$name.upstream.binCraft"
+  rm -rf "$json"
+  wc -c "$name.upstream.binCraft"
+}
 
-# aircraft.binCraft for the flights capture. --throttle: at full speed upstream reads the 3 s file in
-# a few ms and writes no aircraft (it times them by the clock). Stored uncompressed.
-json=$(mktemp -d)
-docker run --rm -v "$PWD":/data -v "$json":/json openradome-upstream --device-type ifile \
-  --ifile /data/flights_uc8.bin --throttle --fix --lat 52.0 --lon 4.0 --max-range 450 \
-  --write-json /json --quiet 2>/dev/null || true
-zstd -dc "$json/aircraft.binCraft.zst" >flights_uc8.upstream.binCraft
-rm -rf "$json"
-wc -c flights_uc8.upstream.binCraft
+located=(--fix --lat 52.0 --lon 4.0 --max-range 450)
+gen synth_uc8
+gen flights_uc8 "${located[@]}"
+gen squawk_uc8 "${located[@]}"
+bincraft flights_uc8 "${located[@]}"
+bincraft squawk_uc8 "${located[@]}"

@@ -17,6 +17,8 @@
 //!   --glitch P        percent of airborne position frames that carry a random position (with a
 //!                     valid CRC), to exercise the tracker's plausibility checks (default 0)
 //!   --ground P        percent of flights that are vehicles on the airport surface (default 0)
+//!   --squawks P       percent of airborne flights that also answer identity requests (DF5) with
+//!                     a squawk, emergency codes among them (default 0: no DF5 at all)
 //!
 //! Optional hex frames (one per line) on stdin are included as-is. Bursts cycle through
 //! all frames. The frames actually transmitted, in order, go to `<out.bin>.truth`.
@@ -263,6 +265,47 @@ fn encode_df11(addr: u32) -> Vec<u8> {
     f
 }
 
+/// The 13-bit identity field for a squawk given as four octal digits: C1 A1 C2 A2 C4 A4 X B1 D1
+/// B2 D2 B4 D4 (the bit order of the Mode A code on the wire).
+fn encode_id13(squawk: u32) -> u32 {
+    let (a, b, c, d) = (
+        (squawk >> 9) & 7,
+        (squawk >> 6) & 7,
+        (squawk >> 3) & 7,
+        squawk & 7,
+    );
+    let bits = [
+        c & 1,
+        a & 1,
+        (c >> 1) & 1,
+        (a >> 1) & 1,
+        (c >> 2) & 1,
+        (a >> 2) & 1,
+        0,
+        b & 1,
+        d & 1,
+        (b >> 1) & 1,
+        (d >> 1) & 1,
+        (b >> 2) & 1,
+        (d >> 2) & 1,
+    ];
+    bits.iter().fold(0, |v, &x| (v << 1) | x)
+}
+
+/// DF5 (identity reply) with address/parity. `squawk` is four octal digits, e.g. 0o7700.
+fn encode_df5(addr: u32, squawk: u32) -> Vec<u8> {
+    let mut b = Bits::new();
+    b.put(5, 5);
+    b.put(0, 3); // FS: airborne, no alert
+    b.put(0, 5); // DR
+    b.put(0, 6); // UM
+    b.put(encode_id13(squawk) as u64, 13);
+    let mut f = b.bytes;
+    f.extend([0, 0, 0]);
+    set_parity(&mut f, Some(addr));
+    f
+}
+
 /// DF4 (altitude reply) with address/parity.
 fn encode_df4(addr: u32, alt_ft: i32) -> Vec<u8> {
     let n = ((alt_ft + 1000) / 25) as u32;
@@ -314,6 +357,7 @@ fn simulate(
     seconds: i64,
     ground_pct: u64,
     glitch_pct: u64,
+    squawk_pct: u64,
 ) -> Vec<(i64, Vec<u8>)> {
     let mut fl: Vec<Flight> = Vec::new();
     for i in 0..flights {
@@ -398,6 +442,22 @@ fn simulate(
             events.push((t, encode_df4(f.addr, alt)));
             t += 1500;
         }
+        // only drawn from the generator when asked for, so captures made without it stay the same
+        if squawk_pct > 0 && !f.ground && rng.pct(squawk_pct) {
+            const CODES: [u32; 8] = [
+                0o7700, 0o7600, 0o7500, 0o1200, 0o2000, 0o7000, 0o4521, 0o0040,
+            ];
+            let squawk = if rng.pct(50) {
+                CODES[rng.below(CODES.len() as u64) as usize]
+            } else {
+                rng.below(0o10000) as u32
+            };
+            let mut t = rng.below(1200) as i64;
+            while t < seconds * 1000 {
+                events.push((t, encode_df5(f.addr, squawk)));
+                t += 1200;
+            }
+        }
     }
     events.sort_by_key(|e| e.0);
     events
@@ -428,6 +488,7 @@ fn main() {
     let (mut min_amp, mut max_amp) = (4000u64, 54000u64);
     let mut format = "uc8".to_string();
     let (mut flights, mut seconds, mut ground, mut glitch) = (0usize, 10i64, 0u64, 0u64);
+    let mut squawks = 0u64;
     while let Some(a) = args.next() {
         let v = args.next().expect("missing value");
         match a.as_str() {
@@ -444,13 +505,14 @@ fn main() {
             "--seconds" => seconds = v.parse().unwrap(),
             "--ground" => ground = v.parse().unwrap(),
             "--glitch" => glitch = v.parse().unwrap(),
+            "--squawks" => squawks = v.parse().unwrap(),
             _ => panic!("unknown option {a}"),
         }
     }
     let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
 
     if flights > 0 {
-        let events = simulate(&mut rng, flights, seconds, ground, glitch);
+        let events = simulate(&mut rng, flights, seconds, ground, glitch, squawks);
         let total =
             (seconds as usize + 1) * 2_400_000 + openradome_core::demod::TRAILING_SAMPLES + 4000;
         let mut mags: Vec<u16> = vec![0; total];

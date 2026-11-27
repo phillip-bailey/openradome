@@ -7,7 +7,7 @@ PI_DIR ?= openradome
 TARGET ?= armv7-unknown-linux-gnueabihf
 GLIBC  ?= 2.31
 
-.PHONY: check test fuzz pi push
+.PHONY: check test fuzz coverage pi push
 check:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
@@ -21,6 +21,11 @@ FUZZ_ITERS ?= 5000000
 FUZZ_SEED  ?= $(shell date +%s)
 fuzz:
 	FUZZ_ITERS=$(FUZZ_ITERS) FUZZ_SEED=$(FUZZ_SEED) cargo test --release -p openradome-core --test fuzz
+
+# Line coverage of the whole test suite. Needs cargo-llvm-cov (brew install cargo-llvm-cov) and
+# rustup component add llvm-tools-preview. The browsable report: cargo llvm-cov --workspace --open
+coverage:
+	cargo llvm-cov --workspace --summary-only
 
 pi:
 	cargo zigbuild --release --target $(TARGET).$(GLIBC)

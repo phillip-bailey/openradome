@@ -78,6 +78,32 @@ const REAL: [&str; 4] = [
     "8D485020994409940838175B284F",
 ];
 
+/// Real Comm-B replies (DF20/21), two of each format the decoder tells apart, from a receiver's
+/// feed: mutating them reaches the register decoders' plausibility scoring, which random payloads
+/// almost never pass.
+const COMMB: [&str; 20] = [
+    "A0000C3620304631C838201D29FD", // 2,0 aircraft identification
+    "A0001838200834F2E76C20E552AC",
+    "A800199C955A5B28A2C45C660F51", // ambiguous
+    "A0000CB7955A5B28A2CC5E4DCE41",
+    "A0000C3B10030A80F500006F7DF2", // 1,0 data link capability
+    "A800083410030A80B50000056FAA",
+    "A800139C00000000000000282272", // empty
+    "A0001838000000000000000758FE",
+    "A00017B0FE81C300000000DAF1A5", // 1,7 GICB capability
+    "A0000DB0FA8DE300000000529E3B",
+    "A8000834E1FA452C3E1FC74C6C6B", // 6,0 heading and speed
+    "A0001291E2DA332D7E0FC495C718",
+    "A000183858C385F3A453F5DE1474", // 4,4 meteorological routine
+    "A800121558BF05EB2DA47E8BF4BE",
+    "A0001718FFFDF934E004F097990E", // 5,0 track and turn
+    "A80005B081BC3F316024E030F567",
+    "A8000834800000003FFCD475447A", // unknown
+    "A000103F1E810300000000043F55",
+    "A00010939F400030AA00006EC3E6", // 4,0 vertical intention
+    "A0001838CA380030A80000DDA9EC",
+];
+
 fn hex(s: &str) -> Vec<u8> {
     (0..s.len() / 2)
         .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
@@ -533,4 +559,66 @@ fn iq_samples_of_any_shape() {
     }
     pipe.finish(&mut |msgs: Vec<ModesMessage>| decoded += msgs.len());
     assert!(decoded > 0, "frames in the noise are still found");
+}
+
+/// Comm-B replies from aircraft that are being tracked, mutated a few bits at a time with their
+/// parity kept right: every register decoder and what the tracker does with its answer (heading,
+/// speeds, selected altitude, wind and temperature).
+#[test]
+fn comm_b_registers_of_any_content() {
+    let mut rng = Rng::new(seed() ^ 0xC0BB);
+    let mut decoder = Decoder::new(1);
+    let mut t = tracker(false);
+    let seeds: Vec<(Vec<u8>, u32)> = COMMB
+        .iter()
+        .map(|s| {
+            let f = hex(s);
+            let addr = checksum(&f); // address/parity: the remainder is the address
+            (f, addr)
+        })
+        .collect();
+    let mut now: i64 = 1_700_000_000_000;
+    // each aircraft announces itself with a squitter first, as on the air
+    for (_, addr) in &seeds {
+        for _ in 0..2 {
+            let mut f = vec![
+                0x8D, 0, 0, 0, 0x20, 0x2C, 0xC3, 0x71, 0xC3, 0x2C, 0xE0, 0, 0, 0,
+            ];
+            f[1..4].copy_from_slice(&addr.to_be_bytes()[1..]);
+            set_parity(&mut f, 0);
+            now += 10;
+            if let Some(mut mm) = message_from_wire(&mut decoder, &f, 0, Some(100), now, 0, false) {
+                t.update_from_message(&mut mm);
+            }
+        }
+    }
+    for i in 0..iterations(150_000) {
+        now += rng.below(30) as i64;
+        let (seed_frame, own) = &seeds[rng.below(seeds.len() as u64) as usize];
+        let mut f = seed_frame.clone();
+        // the payload of one register, sometimes sent by another aircraft
+        let addr = if rng.chance(4) {
+            seeds[rng.below(seeds.len() as u64) as usize].1
+        } else {
+            *own
+        };
+        for _ in 0..rng.below(5) {
+            let bit = 32 + rng.below(56) as usize; // inside MB
+            f[bit / 8] ^= 0x80 >> (bit % 8);
+        }
+        if rng.chance(20) {
+            f[0] ^= 1 << rng.below(3); // the DR/UM bits that make the decoder distrust a reply
+        }
+        set_parity(&mut f, addr);
+        if let Some(mut mm) =
+            message_from_wire(&mut decoder, &f, 0, Some(rng.byte()), now, 0, false)
+        {
+            t.update_from_message(&mut mm);
+        }
+        if i % 25_000 == 0 {
+            t.periodic(now);
+            check_outputs(&t, now, &mut rng);
+        }
+    }
+    check_outputs(&t, now, &mut rng);
 }

@@ -31,7 +31,7 @@ struct Capture {
     flags: &'static [&'static str],
 }
 
-const CAPTURES: [Capture; 2] = [
+const CAPTURES: [Capture; 3] = [
     // synthetic frames from examples/synth_iq.rs
     Capture {
         name: "synth_uc8",
@@ -41,6 +41,20 @@ const CAPTURES: [Capture; 2] = [
     // overlapping replies and implausible positions (examples/synth_iq.rs --flights)
     Capture {
         name: "flights_uc8",
+        flags: &[
+            "--fix",
+            "--lat",
+            "52.0",
+            "--lon",
+            "4.0",
+            "--max-range",
+            "450",
+        ],
+    },
+    // 3 s of 10 flights that also answer identity requests: DF5 squawks, emergency codes among
+    // them (examples/synth_iq.rs --squawks)
+    Capture {
+        name: "squawk_uc8",
         flags: &[
             "--fix",
             "--lat",
@@ -144,10 +158,18 @@ const BINCRAFT_HEADER_TIMED: [std::ops::Range<usize>; 3] = [0..8, 12..16, 44..48
 
 #[test]
 fn aircraft_bincraft_matches_upstream_field_by_field() {
+    for cap in &CAPTURES[1..] {
+        bincraft_matches(cap);
+    }
+}
+
+fn bincraft_matches(cap: &Capture) {
     const SIZE: usize = 112;
-    let cap = &CAPTURES[1];
-    let dir =
-        std::env::temp_dir().join(format!("openradome-golden-bincraft-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "openradome-golden-bincraft-{}-{}",
+        cap.name,
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     run_capture(cap, &["--write-json", dir.to_str().unwrap(), "--quiet"]);
@@ -159,7 +181,7 @@ fn aircraft_bincraft_matches_upstream_field_by_field() {
     )
     .unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let want = std::fs::read(testdata("flights_uc8.upstream.binCraft")).unwrap();
+    let want = std::fs::read(testdata(&format!("{}.upstream.binCraft", cap.name))).unwrap();
 
     let masked = |rec: &[u8], timed: &[std::ops::Range<usize>]| {
         let mut r = rec.to_vec();
@@ -187,7 +209,7 @@ fn aircraft_bincraft_matches_upstream_field_by_field() {
         want.keys().collect::<Vec<_>>(),
         "the same aircraft"
     );
-    assert!(want.len() >= 10, "the capture has its 12 flights");
+    assert!(want.len() >= 8, "{}: the capture's flights", cap.name);
     for (hex, w) in &want {
         let (g, w) = (
             masked(&got[hex], &BINCRAFT_TIMED),
@@ -196,7 +218,8 @@ fn aircraft_bincraft_matches_upstream_field_by_field() {
         let differ: Vec<usize> = (0..SIZE).filter(|&i| g[i] != w[i]).collect();
         assert!(
             differ.is_empty(),
-            "{hex:06x}: bytes {differ:?} differ (see tools/bincraft.py for the layout)"
+            "{}: {hex:06x}: bytes {differ:?} differ (see tools/bincraft.py for the layout)",
+            cap.name
         );
     }
 }

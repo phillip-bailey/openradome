@@ -1,0 +1,44 @@
+# cargo-deny (https://github.com/EmbarkStudios/cargo-deny): `cargo deny check`, run in CI on every push.
+# A dependency with a known vulnerability, a licence that GPLv3 can't take in, or a source other than
+# crates.io fails the build.
+
+[graph]
+all-features = true
+
+[advisories]
+# the RustSec advisory database: vulnerabilities fail; unmaintained crates and yanked versions too
+yanked = "deny"
+unmaintained = "all"
+ignore = []
+
+[licenses]
+# every licence below is compatible with GPL-3.0-or-later (OpenRadome's own)
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# OpenRadome's own crates (GPL-3.0-or-later, not published)
+ignore = true
+
+[bans]
+# two versions of one crate: a note, not a failure (windows-sys comes in twice, from other crates)
+multiple-versions = "warn"
+wildcards = "deny"
+# path dependencies between the workspace's own crates (openradome on openradome-core)
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

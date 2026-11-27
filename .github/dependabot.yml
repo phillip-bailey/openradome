@@ -1,0 +1,16 @@
+# Dependabot: keeps the actions in .github/workflows pinned to current releases. It opens a pull request
+# when an action has a new release (the commit hash and its version comment), at most weekly, and only
+# for releases at least two weeks old.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

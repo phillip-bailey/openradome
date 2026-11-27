@@ -1,4 +1,5 @@
-# GitHub Actions: test on Linux and macOS, build every release target, and publish a release for a v* tag.
+# GitHub Actions: test on Linux and macOS, check the dependencies and the workflow, build every release target,
+# and publish a release for a v* tag. Actions are pinned to a commit (Dependabot keeps them current).
 #
 #   push / pull request   tests + all builds (archives kept as workflow artifacts for 14 days)
 #   tag vX.Y.Z            the same, then a GitHub release with every archive and SHA256SUMS
@@ -25,6 +26,9 @@ env:
   ZIGBUILD_VERSION: "0.24.1"
   GLIBC: "2.31"
   CARGO_TERM_COLOR: always
+  # tools for the checks below, at releases at least two weeks old
+  CARGO_DENY_VERSION: "0.20.2"
+  SEMGREP_VERSION: "1.185.0"
 
 jobs:
   test:
@@ -35,18 +39,56 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Rust ${{ env.RUST_VERSION }}
         run: |
           rustup toolchain install "$RUST_VERSION" --profile minimal -c rustfmt -c clippy
           rustup default "$RUST_VERSION"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Format, clippy, unit, network and golden tests
         run: make test
 
+  # dependencies: known vulnerabilities (RustSec), licences GPLv3 can't take in, sources other than
+  # crates.io (deny.toml)
+  deny:
+    name: dependencies (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: cargo-deny ${{ env.CARGO_DENY_VERSION }}, built from crates.io (checksums from its own lockfile)
+        run: cargo install --locked "cargo-deny@${CARGO_DENY_VERSION}"
+      - name: Check
+        run: cargo deny check
+
+  # the workflow itself (script injection, risky triggers, actions not pinned to a commit) and
+  # secrets committed by mistake. Runs locally on the runner: nothing is uploaded, no account.
+  semgrep:
+    name: workflow and secrets (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Semgrep ${{ env.SEMGREP_VERSION }}
+        run: pipx install "semgrep==${SEMGREP_VERSION}"
+      - name: Scan
+        run: >-
+          semgrep scan --metrics=off --error
+          --config p/github-actions --config p/secrets
+          --exclude testdata --exclude docs .
+
   build:
     name: build (${{ matrix.name }})
-    needs: test
+    needs: [test, deny, semgrep]
     strategy:
       fail-fast: false
       matrix:
@@ -62,14 +104,16 @@ jobs:
           - { name: macos-x86_64,   target: x86_64-apple-darwin,           os: macos-latest,  zig: false }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Rust ${{ env.RUST_VERSION }} for ${{ matrix.target }}
         run: |
           rustup toolchain install "$RUST_VERSION" --profile minimal --target "${{ matrix.target }}"
           rustup default "$RUST_VERSION"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
 
@@ -119,7 +163,7 @@ jobs:
           rm -rf "$name"
           ls -l
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openradome-${{ matrix.name }}
           path: dist/*
@@ -134,7 +178,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true

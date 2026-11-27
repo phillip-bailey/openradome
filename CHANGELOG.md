@@ -28,6 +28,14 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
   longer repeats the query (it could hold the station's position); `radius_nm` must be 0 or more; plain HTTP on
   an address other than loopback prints a warning.
 
+### Removed
+- `install.sh` downloads only from GitHub repositories: other release hosts and `OPENRADOME_TOKEN` (an
+  Authorization header for a private self-hosted release page, visible to other users in `ps`) are gone.
+  Downloads, redirects included, are https only.
+
+### Fixed
+- `install.sh --help` ran `gh release download` (backticks in its help text) instead of printing it.
+
 ### Added
 - `SECURITY.md`: how to report a vulnerability privately (GitHub private vulnerability reporting), what
   happens next, supported versions, scope and hardening tips.
@@ -128,7 +136,7 @@ The project is now **OpenRadome**: one name for the project, the repository, the
 ### Changed
 - Release archives are named by platform (`linux-armv7`, `macos-arm64`, `windows-x86_64`, ...) instead of by
   Rust target; `install.sh` asks for the plain name first and falls back to the old one.
-- GitHub is the project's home: `install.sh` downloads from it, and the Gitea pipeline and
+- GitHub is the project's home: `install.sh` downloads from it, and the old self-hosted release pipeline and
   `tools/release-mac.sh` are gone (GitHub Actions builds macOS too).
 
 ### Fixed

@@ -7,6 +7,27 @@ Releases, with downloads for every platform and their `SHA256SUMS`, are on the
 
 ## [Unreleased]
 
+### Security
+- **Connection limits:** the data ports take at most 512 clients in all and 32 from one host other than this
+  computer (local feed and MLAT clients are exempt from the per-host limit); the dashboard 64 and 8 from one
+  host, MCP 32 and 8, the API 128 and 16. A failed accept (out of file descriptors) now waits 250 ms instead of
+  retrying at once, which spun a core and starved every connection and file write.
+- **Timeouts:** the dashboard and the API give up on a client that stops reading after 10 s; the API closes a
+  kept-alive connection after 75 s without a request.
+- **Raw input:** a line with a non-ASCII byte no longer panics its connection, and a sign is no longer taken as
+  part of a hex number; lines are split in one pass (a read of nothing but newlines cost the square of its
+  length).
+- **Forged aircraft:** the aircraft table holds at most 50,000 (each about 2 kB; far above real traffic), with a
+  warning once a minute when full; the active list is looked up without a scan per message; and a position
+  message no longer copies the aircraft's whole trace.
+- **Address filter:** recently seen addresses are now forgotten after 60 to 120 s, as upstream does. They were
+  kept for ever, so after a sweep of forged addresses noise matched them and was decoded.
+- **Dashboard and DNS rebinding:** requests for a host name other than an IP address, localhost, a name without
+  a dot or one under .local, .lan, .home.arpa or .internal get 403, unless given with `--dashboard-host`.
+- **MCP:** the token is checked before the body is read, and a refused connection is closed; a query error no
+  longer repeats the query (it could hold the station's position); `radius_nm` must be 0 or more; plain HTTP on
+  an address other than loopback prints a warning.
+
 ### Added
 - `SECURITY.md`: how to report a vulnerability privately (GitHub private vulnerability reporting), what
   happens next, supported versions, scope and hardening tips.

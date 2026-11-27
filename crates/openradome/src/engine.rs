@@ -55,7 +55,16 @@ pub struct Engine<'a> {
     /// No local SDR or file: only network input.
     pub net_only: bool,
     pub write_error: Option<io::Error>,
+    /// When the recently-seen address filter next ages (upstream: every 60 s).
+    next_icao_flip: i64,
+    /// Aircraft refused because the table was full, as last reported.
+    reported_table_full: u64,
+    next_table_full_report: i64,
 }
+
+/// Upstream's `MODES_ICAO_FILTER_TTL`: an address not heard for one to two of these is forgotten,
+/// so noise can no longer match it.
+const ICAO_FILTER_TTL_MS: i64 = 60_000;
 
 impl<'a> Engine<'a> {
     pub fn new(
@@ -83,6 +92,9 @@ impl<'a> Engine<'a> {
             filter_df: cli.filter_df_bits(),
             net_only,
             write_error: None,
+            next_icao_flip: 0,
+            reported_table_full: 0,
+            next_table_full_report: 0,
         }
     }
 
@@ -293,6 +305,20 @@ impl<'a> Engine<'a> {
     /// Time-driven housekeeping: expiry, the command file, JSON files and saved state.
     pub fn tick(&mut self, now: i64) -> Result<(), String> {
         self.tracker.periodic(now);
+        if now >= self.next_icao_flip || self.next_icao_flip - now > ICAO_FILTER_TTL_MS {
+            self.pipe.demod.decoder.icao.expire();
+            self.next_icao_flip = now + ICAO_FILTER_TTL_MS;
+        }
+        let refused = self.tracker.refused_table_full;
+        if refused > self.reported_table_full && now >= self.next_table_full_report {
+            eprintln!(
+                "openradome: the aircraft table is full ({} aircraft): {} new addresses ignored; forged traffic?",
+                openradome_core::track::MAX_AIRCRAFT,
+                refused - self.reported_table_full
+            );
+            self.reported_table_full = refused;
+            self.next_table_full_report = now + 60_000;
+        }
         if let Some(cmd) = self.json.as_mut().and_then(|w| w.take_command(now)) {
             self.run_command(&cmd);
         }

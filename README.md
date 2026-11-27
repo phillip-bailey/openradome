@@ -281,6 +281,12 @@ it answers `GET` for `/` and nothing else changes anything. It listens on `--das
 (`--net-bind-address 127.0.0.1`) can still show the page on the LAN with `--dashboard-bind-address 0.0.0.0` (or the
 Pi's LAN address). There is no password, so do not expose the port to the internet.
 
+It answers requests for an IP address, `localhost`, a name without a dot (`raspberrypi`) or a name under `.local`,
+`.lan`, `.home.arpa` or `.internal`. Any other name gets 403 Forbidden, so a web page on someone else's domain
+can't read the dashboard by pointing that domain at your LAN (DNS rebinding). If you reach it by another name,
+such as through a reverse proxy, add it with `--dashboard-host adsb.example.org` (repeatable; in the TOML file
+`dashboard-host = ["adsb.example.org"]`).
+
 ## MCP server
 
 An optional [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI assistant (Claude Code
@@ -523,10 +529,19 @@ Pi next to OpenRadome. The same input goes through both programs and the outputs
 | same capture | `outline.json` | byte-identical |
 | same capture, `--write-state`; each decoder restarted from the other's `rangeDirs.gz` | `outline.json` (240 points) | identical in both directions |
 
-`cargo test` repeats the decoding comparison on every run, on two synthetic captures from `examples/synth_iq.rs`:
-`testdata/synth_uc8.bin` (random frames) and `testdata/flights_uc8.bin` (3 s of 12 simulated flights with bit
-errors, overlaps and bad positions), each compared with upstream's output for the same file. The recordings in the
-table above were made at the author's station and are not in the repository.
+`cargo test` repeats the decoding comparison on every run, on three synthetic captures from `examples/synth_iq.rs`:
+`testdata/synth_uc8.bin` (random frames), `testdata/flights_uc8.bin` (3 s of 12 simulated flights with bit
+errors, overlaps and bad positions) and `testdata/squawk_uc8.bin` (10 flights that also send squawks, emergency
+codes among them). Each is compared with upstream's output for the same file: the decoded messages, the
+statistics, and for the two flight captures `aircraft.binCraft` field by field. `tools/regen-golden.sh` makes the
+upstream files. The recordings in the table above were made at the author's station and are not in the
+repository.
+
+The tests also fuzz every decoder that takes outside input (`crates/openradome-core/tests/fuzz.rs`): radio frames
+with valid CRCs, mutated real frames, Comm-B registers, IQ samples, Beast and raw streams and API queries, through
+the tracker and every output format, checking that nothing panics, the JSON stays valid and memory stays bounded.
+`cargo test` runs a short round; `make fuzz FUZZ_ITERS=50000000` a long one. `make coverage` reports the line
+coverage (about 90 %).
 
 ## Performance
 

@@ -35,6 +35,10 @@ const REQUEST_MAX: usize = 8 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Connections served at once; more are closed straight away.
 const MAX_CONNECTIONS: usize = 64;
+/// ... and from one address other than this computer's own.
+const MAX_CONNECTIONS_PER_HOST: usize = 8;
+/// A reply must be taken within this long.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often the page reloads itself, in seconds.
 const REFRESH_S: u32 = 10;
 
@@ -163,6 +167,8 @@ struct Shared {
     started: i64,
     /// There is a local receiver (SDR or IQ file), so signal and noise mean something.
     local: bool,
+    /// `--dashboard-host`: host names answered besides the usual local ones.
+    hosts: Vec<String>,
 }
 
 /// The engine's half: collects the figures. The page is served by a task on the runtime.
@@ -184,12 +190,14 @@ impl Dashboard {
         now: i64,
         local: bool,
         version: &'static str,
+        hosts: Vec<String>,
     ) -> io::Result<Self> {
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             version,
             started: now,
             local,
+            hosts,
         });
         if let Some(addr) = listen {
             serve_page(rt, addr, shared.clone())?;
@@ -218,12 +226,12 @@ fn serve_page(rt: &Handle, addr: SocketAddr, shared: Arc<Shared>) -> io::Result<
         TcpListener::from_std(std_listener)?
     };
     let s = shared;
-    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let slots = net::ClientLimit::new(MAX_CONNECTIONS, MAX_CONNECTIONS_PER_HOST);
     rt.spawn(async move {
         loop {
             match listener.accept().await {
-                Ok((sock, _)) => {
-                    let Ok(slot) = slots.clone().try_acquire_owned() else {
+                Ok((sock, peer)) => {
+                    let Some(slot) = slots.take(peer.ip()) else {
                         continue; // too many open: drop this one
                     };
                     let s = s.clone();
@@ -304,6 +312,7 @@ impl StatusHandle {
             version: "openradome test",
             started: 0,
             local: true,
+            hosts: Vec::new(),
         }))
     }
 
@@ -597,7 +606,7 @@ async fn serve(mut sock: TcpStream, shared: Arc<Shared>, idle: Duration) {
                     clients: net::clients(),
                 })
             };
-            respond(&buf, page)
+            respond(&buf, &shared.hosts, page)
         }
         Ok(Request::TooLarge) => reply(
             "431 Request Header Fields Too Large",
@@ -607,13 +616,25 @@ async fn serve(mut sock: TcpStream, shared: Arc<Shared>, idle: Duration) {
         ),
         Ok(Request::Nothing) | Err(_) => return,
     };
-    let _ = sock.write_all(&reply).await;
-    let _ = sock.shutdown().await;
+    // a client that stops reading must not hold its slot for ever
+    let _ = tokio::time::timeout(WRITE_TIMEOUT, async {
+        let _ = sock.write_all(&reply).await;
+        let _ = sock.shutdown().await;
+    })
+    .await;
 }
 
 /// The reply to one request. `page` draws the page, only when it is asked for.
-fn respond(request: &[u8], page: impl FnOnce() -> String) -> Vec<u8> {
+fn respond(request: &[u8], hosts: &[String], page: impl FnOnce() -> String) -> Vec<u8> {
     let text = String::from_utf8_lossy(request);
+    if !host_allowed(&text, hosts) {
+        return reply(
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            b"unknown host name: give it to OpenRadome with --dashboard-host\n",
+            false,
+        );
+    }
     let first = text.lines().next().unwrap_or("");
     let mut parts = first.split(' ');
     let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
@@ -640,6 +661,45 @@ fn respond(request: &[u8], page: impl FnOnce() -> String) -> Vec<u8> {
             head,
         ),
     }
+}
+
+/// Is the request for a name this computer answers to? A browser sends the name it looked up, so
+/// a page on someone else's domain that re-points that domain here (DNS rebinding) is refused,
+/// while the LAN's own names and addresses work without setting anything.
+fn host_allowed(request: &str, extra: &[String]) -> bool {
+    let host = request
+        .lines()
+        .skip(1)
+        .take_while(|l| !l.is_empty())
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case("host").then(|| v.trim())
+        });
+    // no Host header: HTTP/1.0, which no browser sends
+    let Some(host) = host else {
+        return true;
+    };
+    let host = host.to_ascii_lowercase();
+    if let Some(rest) = host.strip_prefix('[') {
+        // [IPv6 address], perhaps with a port
+        return rest
+            .split_once(']')
+            .is_some_and(|(ip, _)| ip.parse::<std::net::IpAddr>().is_ok());
+    }
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host.as_str(),
+    };
+    let name = name.trim_end_matches('.');
+    name.parse::<std::net::Ipv4Addr>().is_ok()
+        || name == "localhost"
+        || !name.contains('.')
+        || [".local", ".lan", ".home.arpa", ".internal", ".localhost"]
+            .iter()
+            .any(|s| name.ends_with(s))
+        || extra
+            .iter()
+            .any(|e| e.trim_end_matches('.').eq_ignore_ascii_case(name))
 }
 
 fn reply(status: &str, content_type: &str, body: &[u8], head_only: bool) -> Vec<u8> {
@@ -1399,8 +1459,9 @@ mod tests {
 
     #[test]
     fn requests() {
-        let get =
-            |r: &str| String::from_utf8(respond(r.as_bytes(), || "<p>page</p>".into())).unwrap();
+        let get = |r: &str| {
+            String::from_utf8(respond(r.as_bytes(), &[], || "<p>page</p>".into())).unwrap()
+        };
         let ok = get("GET / HTTP/1.1\r\nHost: pi\r\n\r\n");
         assert!(
             ok.starts_with("HTTP/1.1 200 OK\r\n") && ok.ends_with("<p>page</p>"),
@@ -1492,7 +1553,48 @@ mod tests {
             version: "t",
             started: 0,
             local: false,
+            hosts: Vec::new(),
         })
+    }
+
+    #[test]
+    fn only_local_names_and_given_ones_are_answered() {
+        let req = |host: &str| format!("GET / HTTP/1.1\r\nHost: {host}\r\nAccept: */*\r\n\r\n");
+        let extra = vec!["adsb.example.org".to_string()];
+        for ok in [
+            "192.168.1.50:8090",
+            "192.168.1.50",
+            "[fe80::1]:8090",
+            "[::1]",
+            "localhost:8090",
+            "raspberrypi",
+            "raspberrypi:8090",
+            "raspberrypi.local",
+            "RASPBERRYPI.LAN:8090",
+            "pi.home.arpa",
+            "adsb.example.org:8090",
+            "adsb.example.org.",
+        ] {
+            assert!(host_allowed(&req(ok), &extra), "{ok}");
+        }
+        for bad in [
+            "evil.example.com",
+            "evil.example.com:8090",
+            "192.168.1.50.nip.io",
+            "[evil]",
+            "local.evil.com",
+        ] {
+            assert!(!host_allowed(&req(bad), &extra), "{bad}");
+        }
+        assert!(
+            host_allowed("GET / HTTP/1.0\r\n\r\n", &[]),
+            "no Host header"
+        );
+        let refused = String::from_utf8(respond(req("evil.example.com").as_bytes(), &[], || {
+            unreachable!("not drawn")
+        }))
+        .unwrap();
+        assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
     }
 
     /// A browser's spare connection that never sends a request must get no reply at all: a reply

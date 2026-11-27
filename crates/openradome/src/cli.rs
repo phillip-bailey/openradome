@@ -160,6 +160,12 @@ pub struct Cli {
     /// reached from the LAN while the data ports stay on 127.0.0.1
     #[arg(long, value_name = "ip", help_heading = "Network options")]
     pub dashboard_bind_address: Option<std::net::IpAddr>,
+    /// Also answer dashboard requests for this host name (repeatable). Always answered: IP
+    /// addresses, localhost, names without a dot and names under .local, .lan, .home.arpa and
+    /// .internal. Others are refused, so a web page elsewhere can't read the dashboard by pointing
+    /// its own name at this computer (DNS rebinding)
+    #[arg(long, value_name = "name", help_heading = "Network options")]
+    pub dashboard_host: Vec<String>,
     /// Serve a Model Context Protocol (MCP) server on this port, at /mcp: read-only tools an AI
     /// assistant can ask about the station (openradome only; off unless given; needs --mcp-token-file)
     #[arg(long, value_name = "port", help_heading = "Network options")]

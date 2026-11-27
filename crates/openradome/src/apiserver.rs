@@ -64,11 +64,19 @@ impl Api {
             TcpListener::from_std(std_listener)?
         };
         let s = shared.clone();
+        let slots = crate::net::ClientLimit::new(MAX_CONNECTIONS, MAX_CONNECTIONS_PER_HOST);
         rt.spawn(async move {
             loop {
                 match listener.accept().await {
-                    Ok((sock, _)) => {
-                        tokio::spawn(serve(sock, s.clone()));
+                    Ok((sock, peer)) => {
+                        let Some(slot) = slots.take(peer.ip()) else {
+                            continue; // too many open: drop this one
+                        };
+                        let s = s.clone();
+                        tokio::spawn(async move {
+                            serve(sock, s).await;
+                            drop(slot);
+                        });
                     }
                     Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
                 }
@@ -223,30 +231,51 @@ fn handle(raw: &[u8], shared: &Shared) -> Outcome {
     Outcome { reply, keepalive }
 }
 
+/// Connections served at once (each holds a file descriptor); more are closed straight away.
+const MAX_CONNECTIONS: usize = 128;
+/// ... and from one address other than this computer's own (a proxy in front comes from there).
+const MAX_CONNECTIONS_PER_HOST: usize = 16;
+/// A kept-alive connection with no new request for this long is closed (nginx's own keep-alive
+/// is 60 s), and a reply must be taken within `WRITE_TIMEOUT`.
+const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
+const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 async fn serve(mut sock: TcpStream, shared: Arc<Shared>) {
     let _ = sock.set_nodelay(true);
     let mut buf: Vec<u8> = Vec::with_capacity(2048);
     let mut chunk = [0u8; 2048];
     loop {
         // read until a complete request (a blank line) is there
-        let end = loop {
-            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                break pos + 4;
+        let read = async {
+            loop {
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    return Some(pos + 4);
+                }
+                if buf.len() > REQUEST_MAX {
+                    return None;
+                }
+                match sock.read(&mut chunk).await {
+                    Ok(0) | Err(_) => return Some(0),
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                }
             }
-            if buf.len() > REQUEST_MAX {
-                let _ = sock
-                    .write_all(&status_reply("400 Bad Request", false))
-                    .await;
+        };
+        let end = match tokio::time::timeout(IDLE_TIMEOUT, read).await {
+            Err(_) | Ok(Some(0)) => return,
+            Ok(Some(end)) => end,
+            Ok(None) => {
+                let _ = tokio::time::timeout(
+                    WRITE_TIMEOUT,
+                    sock.write_all(&status_reply("400 Bad Request", false)),
+                )
+                .await;
                 return;
-            }
-            match sock.read(&mut chunk).await {
-                Ok(0) | Err(_) => return,
-                Ok(n) => buf.extend_from_slice(&chunk[..n]),
             }
         };
         let request: Vec<u8> = buf.drain(..end).collect();
         let out = handle(&request, &shared);
-        if sock.write_all(&out.reply).await.is_err() || !out.keepalive {
+        let written = tokio::time::timeout(WRITE_TIMEOUT, sock.write_all(&out.reply)).await;
+        if !matches!(written, Ok(Ok(()))) || !out.keepalive {
             let _ = sock.shutdown().await;
             return;
         }
